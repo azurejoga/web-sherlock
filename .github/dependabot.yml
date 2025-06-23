@@ -3,11 +3,8 @@ updates:
   - package-ecosystem: "pip"
     directory: "/"  # Diretório onde está localizado o pyproject.toml
     schedule:
-      interval: "weekly
-    open-pull-requests-limit: 20
+      interval: "daily"  # O menor intervalo suportado oficialmente
     rebase-strategy: "auto"
     commit-message:
       prefix: "deps"
       include: "scope"
-        
-  
