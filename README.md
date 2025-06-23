@@ -29,13 +29,9 @@ A bilingual web interface built with Flask to search usernames across multiple s
 ### Method 1: Local Installation
 
 #### Linux/macOS:
-
 ```bash
-# Clone the repository
 git clone https://github.com/azurejoga/web-sherlock.git
 cd web-sherlock
-
-# Recommended: Use Poetry
 python3 -m venv websherlock
 source websherlock/bin/activate
 pip install poetry
@@ -46,11 +42,8 @@ python3 main.py
 #### Windows:
 
 ```bash
-# Clone the repository
 git clone https://github.com/azurejoga/web-sherlock.git
 cd web-sherlock
-
-# Recommended: Use Poetry
 python -m venv websherlock
 websherlock\Scripts\activate
 pip install poetry
