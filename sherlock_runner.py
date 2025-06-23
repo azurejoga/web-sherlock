@@ -52,17 +52,33 @@ class SherlockRunner:
             }
             
             total_usernames = len(usernames)
+            estimated_sites_per_user = 50  # Approximate number of sites
+            total_estimated_operations = total_usernames * estimated_sites_per_user
+            current_operation = 0
+            
+            # Initialize progress
+            progress_tracker[search_id]['progress'] = 5
+            progress_tracker[search_id]['message'] = translations['search_starting']
+            progress_tracker[search_id]['status'] = 'running'
             
             for i, username in enumerate(usernames):
-                # Update progress
-                progress = int((i / total_usernames) * 90)  # Reserve 10% for final processing
-                progress_tracker[search_id]['progress'] = progress
+                # Update progress for user start
+                base_progress = int((i / total_usernames) * 85) + 5  # 5-90% range
+                progress_tracker[search_id]['progress'] = base_progress
                 progress_tracker[search_id]['message'] = f"{translations['searching_user']} {username}..."
                 
                 user_results = self._search_username(username, options)
                 
-                # Process results for this username
+                # Simulate progress increment for each site checked
+                sites_checked = 0
                 for site_name, site_data in user_results.items():
+                    sites_checked += 1
+                    # Update progress incrementally
+                    user_progress = base_progress + int((sites_checked / len(user_results)) * (85 / total_usernames))
+                    progress_tracker[search_id]['progress'] = min(user_progress, 90)
+                    progress_tracker[search_id]['current_site'] = site_name
+                    progress_tracker[search_id]['sites_checked'] = current_operation + sites_checked
+                    
                     profile_data = {
                         'username': username,
                         'site': site_name,
@@ -75,13 +91,17 @@ class SherlockRunner:
                         results['found_profiles'].append(profile_data)
                     else:
                         results['not_found_profiles'].append(profile_data)
+                
+                current_operation += sites_checked
             
             # Final processing
             progress_tracker[search_id]['progress'] = 95
             progress_tracker[search_id]['message'] = translations['processing_results']
+            progress_tracker[search_id]['current_site'] = ''
             
             results['total_sites_checked'] = len(results['found_profiles']) + len(results['not_found_profiles'])
             results['search_timestamp'] = self._get_timestamp()
+            progress_tracker[search_id]['total_sites'] = results['total_sites_checked']
             
             return results
             

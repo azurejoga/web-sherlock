@@ -21,8 +21,9 @@
                 {{ translations.app_title }}
             </a>
             
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-label="{{ translations.menu }}">
                 <span class="navbar-toggler-icon"></span>
+                <span class="visually-hidden">{{ translations.menu }}</span>
             </button>
             
             <div class="collapse navbar-collapse" id="navbarNav">
@@ -32,10 +33,40 @@
                             <i class="fas fa-home me-1"></i>{{ translations.home }}
                         </a>
                     </li>
+                    {% if session.get('user_id') %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('search_history') }}">
+                            <i class="fas fa-history me-1"></i>{{ translations.search_history }}
+                        </a>
+                    </li>
+                    {% endif %}
                 </ul>
                 
-                <!-- Language switcher -->
+                <!-- User menu and Language switcher -->
                 <div class="navbar-nav">
+                    {% if session.get('user_id') %}
+                    <div class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="fas fa-user me-1"></i>{{ session.get('user_id') }}
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="{{ url_for('search_history') }}">
+                                <i class="fas fa-history me-1"></i>{{ translations.search_history }}
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{{ url_for('logout') }}">
+                                <i class="fas fa-sign-out-alt me-1"></i>{{ translations.logout }}
+                            </a></li>
+                        </ul>
+                    </div>
+                    {% else %}
+                    <div class="nav-item">
+                        <a class="nav-link" href="{{ url_for('login') }}">
+                            <i class="fas fa-sign-in-alt me-1"></i>{{ translations.login }}
+                        </a>
+                    </div>
+                    {% endif %}
+                    
                     <div class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
                             <i class="fas fa-globe me-1"></i>{{ translations.language }}

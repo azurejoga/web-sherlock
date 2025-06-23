@@ -96,6 +96,9 @@ class ExportUtils:
     def _export_pdf_reportlab(self, results, filename):
         """Export PDF using ReportLab"""
         try:
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.pagesizes import A4
+            
             c = canvas.Canvas(filename, pagesize=A4)
             width, height = A4
             
@@ -212,26 +215,34 @@ class ExportUtils:
         return '\n'.join(content)
     
     def export_zip_simple(self, results, search_id):
-        """Export CSV and JSON formats in a ZIP file"""
+        """Export all formats in a ZIP file"""
         zip_filename = os.path.join(self.results_folder, f"sherlock_results_{search_id}.zip")
         
         try:
-            # Generate export files
+            # Generate all export files
             csv_file = self.export_csv(results, search_id)
             json_file = self.export_json(results, search_id)
+            txt_file = self.export_txt(results, search_id)
+            pdf_file = self.export_pdf(results, search_id)
             
-            # Create ZIP file
+            # Create ZIP file with all formats
             with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                if os.path.exists(csv_file):
-                    zipf.write(csv_file, os.path.basename(csv_file))
-                if os.path.exists(json_file):
-                    zipf.write(json_file, os.path.basename(json_file))
+                files_to_zip = [
+                    (csv_file, f"sherlock_results_{search_id}.csv"),
+                    (json_file, f"sherlock_results_{search_id}.json"),
+                    (txt_file, f"sherlock_results_{search_id}.txt"),
+                    (pdf_file, f"sherlock_results_{search_id}.pdf")
+                ]
+                
+                for file_path, archive_name in files_to_zip:
+                    if os.path.exists(file_path):
+                        zipf.write(file_path, archive_name)
             
             # Clean up individual files
-            for file in [csv_file, json_file]:
+            for file_path, _ in files_to_zip:
                 try:
-                    if os.path.exists(file):
-                        os.remove(file)
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
                 except OSError:
                     pass
             

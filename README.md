@@ -1,99 +1,166 @@
-# Web Sherlock - Web Interface to Search for Usernames with Sherlock
+# Web Sherlock
 
-A **Bilingual Web Interface (Portuguese/English)** built with Flask to search for usernames across social networks using the [Sherlock project](https://github.com/sherlock-project/sherlock).
+A bilingual web interface built with Flask to search usernames across multiple social networks using the Sherlock Project, with authentication system, search history, and multiple export formats.
 
 ## 🌟 Features
 
-- **Bilingual Interface**: Full support for Portuguese and English  
-- **Multi-Username Search**: Search for multiple usernames at once  
-- **JSON Upload**: Upload username lists via JSON files  
-- **Integrated Sherlock**: Sherlock is already included in the project  
-- **Asynchronous Execution**: Real-time progress bar  
-- **Export Options**: Export results in JSON (more formats coming soon)  
-- **Responsive UI**: Modern design with Bootstrap 5  
-- **Accessibility**: Full support for visually impaired users  
+* 🔍 **Advanced Search**: Look up usernames on 400+ social networks
+* 👥 **Multiple Users**: Search for multiple usernames (separated by lines or commas)
+* 🌍 **Bilingual Interface**: Portuguese and English with JSON-based translation system
+* 🔐 **Authentication System**: Registration, login, and session control
+* 📊 **Real-Time Monitoring**: Animated progress bar (without percentage)
+* 📈 **Search History**: View, delete, and manage past searches
+* 📄 **Multiple Export Formats**: JSON, CSV, PDF, TXT, and ZIP
+* ⏱️ **Rate Limiting**: 60-second cooldown between searches
+* 🎨 **Responsive Interface**: Modern UI with Bootstrap 5
+* ⚡ **Asynchronous Processing**: Background search with live updates
 
-## 📋 Requirements
+## 🛠️ Technologies Used
 
-- Python 3.8 or higher  
-- Git  
-- [Poetry](https://python-poetry.org/) for dependency management  
+* **Backend**: Python 3.11+, Flask 3.0, Gunicorn
+* **Frontend**: Bootstrap 5, JavaScript, Font Awesome
+* **Integration**: Embedded Sherlock CLI
+* **Export Tools**: ReportLab (PDF), Pandas (CSV), built-in JSON
+* **Authentication**: JSON file-based system
+* **Internationalization**: JSON translation system
 
-## 🚀 Installation and Usage
+## 🚀 Installation & Execution
 
-### 1. Clone the Repository
+### Method 1: Local Installation
+
+#### Linux/macOS:
 
 ```bash
+# Clone the repository
 git clone https://github.com/azurejoga/web-sherlock.git
 cd web-sherlock
-````
 
-### 2. Install Dependencies with Poetry
-
-Make sure you have Poetry installed. Then run:
-
-```bash
+# Recommended: Use Poetry
+python3 -m venv websherlock
+source websherlock/bin/activate
+pip install poetry
 poetry install --no-root
+python3 main.py
 ```
 
-### 3. Activate the Virtual Environment
+#### Windows:
 
 ```bash
-poetry shell
+# Clone the repository
+git clone https://github.com/azurejoga/web-sherlock.git
+cd web-sherlock
+
+# Recommended: Use Poetry
+python -m venv websherlock
+websherlock\Scripts\activate
+pip install poetry
+poetry install --no-root
+python main.py
 ```
 
-### 4. Run the Application
+The application will be available at `http://localhost:5000`
 
-```bash
-python3 main.py or python main.py
+## 📋 How to Use
+
+### 1. Register and Log In
+
+* Open the application and create an account
+* Log in to access full features
+
+### 2. Perform Searches
+
+* **Method 1**: Type one username per line
+* **Method 2**: Enter usernames separated by commas: `azurejoga, zargonbr, user3`
+* **Method 3**: Upload a JSON file with a list of usernames
+* Click "Start Search" to begin and track progress live
+
+### 3. Manage Search History
+
+* Go to "Search History" in the menu
+* View previous results by clicking "View Results"
+* Delete individual items or clear all history
+
+### 4. Export Results
+
+* **JSON**: Structured data for integration
+* **CSV**: Excel-compatible spreadsheet
+* **PDF**: Print-friendly report
+* **TXT**: Plain text
+* **ZIP**: All formats in a compressed file
+
+### 🗂️ Project Structure
+
+```
+web-sherlock/
+├── app.py                 # Main Flask app
+├── main.py                # Entry point
+├── auth_manager.py        # Authentication system
+├── sherlock_runner.py     # Sherlock integration
+├── export_utils.py        # Export logic
+├── translations.py        # Language system
+├── templates/             # HTML templates
+├── static/                # CSS and JavaScript
+├── translations/          # JSON translation files
+├── sherlock/              # Embedded Sherlock project
+├── uploads/               # Uploaded files
+├── results/               # Exported results
+├── Dockerfile             # Docker setup
+├── docker-compose.yml     # Docker orchestration
+└── pyproject.toml         # Poetry dependencies
 ```
 
-The application will be available at: [http://localhost:5000](http://localhost:5000)
+## 🌐 Internationalization
 
-## 📖 How to Use
+Supports multiple languages via JSON files:
 
-### Username Search
+* `translations/pt.json` - Portuguese (Brazil)
+* `translations/en.json` - English
 
-1. Enter one or more usernames (one per line) in the input field
-2. Select the desired options:
+To add a new language, create a JSON file in the `translations/` directory with corresponding keys and translations.
 
-   * **Show All Sites**: Display sites where the user was not found
-   * **Only Show Found**: Show only found profiles
-   * **Include NSFW Sites**: Include adult websites in the search
-   * **Use Local Data**: Force usage of Sherlock's local data
-   * **Timeout**: Set a timeout for each request (default: 60s)
-3. Click "Start Search"
+## 🔒 Authentication System
 
-### JSON File Upload
+* **File-Based**: No database required
+* **Encrypted Passwords**: SHA-256 with salt
+* **Secure Sessions**: Managed by Flask
+* **User-Specific History**: Each user has private search history
 
-You can upload a JSON file containing a list of usernames:
+## 📊 Monitoring
 
-```json
-["user1", "user2", "user3"]
-```
+The system includes:
 
-or
+* **Visual Progress**: Spinner-style progress bar
+* **Real-Time Status**: Updates every second
+* **Detailed Feedback**: Current site being checked
+* **Counters**: Number of sites scanned
 
-```json
-{
-  "usernames": ["user1", "user2", "user3"]
-}
-```
+## 👨‍💻 Author
 
-**Note**: When a JSON file is uploaded, the "Use Local Data" option is automatically selected for compatibility.
+**Juan Mathews Rebello Santos**
 
-### Exporting Results
+* GitHub: [@azurejoga](https://github.com/azurejoga)
+* LinkedIn: [Juan Mathews Rebello Santos](https://linkedin.com/in/juan-mathews-rebello-santos-/)
+* Project: [Web Sherlock](https://github.com/azurejoga/web-sherlock/)
 
-Once the search is completed, results can be exported:
+## 🤝 Contributing
 
-* **JSON**: Structured data in JSON format (more formats coming soon)
+1. Fork this repository
+2. Create a branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-## 🌐 Language Switch
+## 📝 License
 
-Use the language menu at the top of the page to switch between Portuguese (🇧🇷) and English (🇺🇸).
+This project is licensed under the MIT License. See the `LICENSE` file for more details.
 
-## 🔧 Advanced Options
+## 🔗 Useful Links
 
-### Custom Timeout
+* [GitHub Repository](https://github.com/azurejoga/web-sherlock/)
+* [Original Sherlock Project](https://github.com/sherlock-project/sherlock)
+* [Flask Documentation](https://flask.palletsprojects.com/)
+* [Bootstrap 5](https://getbootstrap.com/)
 
-Set a custom timeout for each request (1–300 seconds).
+## 📞 Support
+
+To report bugs or request features, open an [issue on GitHub](https://github.com/azurejoga/web-sherlock/issues).

@@ -19,15 +19,23 @@
         <!-- Progress card -->
         <div class="card mb-4" id="progressCard">
             <div class="card-body">
-                <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex justify-content-between align-items-center mb-3">
                     <h6 class="mb-0" id="progressStatus">{{ translations.search_starting }}</h6>
-                    <span class="badge bg-secondary" id="progressPercent">0%</span>
+                    <div class="spinner-border spinner-border-sm text-primary" role="status" id="loadingSpinner">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
                 </div>
-                <div class="progress" style="height: 10px;">
-                    <div class="progress-bar progress-bar-striped progress-bar-animated" 
-                         role="progressbar" style="width: 0%" id="progressBar"></div>
+                <div class="progress" style="height: 8px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" 
+                         role="progressbar" style="width: 100%" id="progressBar"></div>
                 </div>
-                <small class="text-muted mt-1 d-block" id="progressMessage">{{ translations.search_starting }}</small>
+                <small class="text-muted mt-2 d-block" id="progressMessage">{{ translations.search_starting }}</small>
+                <div class="mt-2" id="progressDetails">
+                    <small class="text-info">
+                        <span id="currentSite"></span>
+                        <span id="sitesProgress"></span>
+                    </small>
+                </div>
             </div>
         </div>
 
@@ -85,6 +93,18 @@
                 <div class="btn-group flex-wrap" role="group">
                     <a href="#" id="exportJsonBtn" class="btn btn-primary" style="display: none;">
                         <i class="fas fa-file-code me-1"></i>{{ translations.export_json }}
+                    </a>
+                    <a href="#" id="exportCsvBtn" class="btn btn-success" style="display: none;">
+                        <i class="fas fa-file-csv me-1"></i>{{ translations.export_csv }}
+                    </a>
+                    <a href="#" id="exportPdfBtn" class="btn btn-danger" style="display: none;">
+                        <i class="fas fa-file-pdf me-1"></i>{{ translations.export_pdf }}
+                    </a>
+                    <a href="#" id="exportTxtBtn" class="btn btn-info" style="display: none;">
+                        <i class="fas fa-file-alt me-1"></i>{{ translations.export_txt }}
+                    </a>
+                    <a href="#" id="exportZipBtn" class="btn btn-warning" style="display: none;">
+                        <i class="fas fa-file-archive me-1"></i>{{ translations.download_all }}
                     </a>
                 </div>
             </div>
@@ -155,21 +175,52 @@ function updateProgress() {
     fetch(`/progress/${searchId}`)
         .then(response => response.json())
         .then(data => {
-            document.getElementById('progressStatus').textContent = data.status;
-            document.getElementById('progressPercent').textContent = `${data.progress}%`;
-            document.getElementById('progressBar').style.width = `${data.progress}%`;
-            document.getElementById('progressMessage').textContent = data.message;
+            console.log('Progress data:', data); // Debug log
+            
+            const progressBar = document.getElementById('progressBar');
+            const progressStatus = document.getElementById('progressStatus');
+            const progressMessage = document.getElementById('progressMessage');
+            const progressDetails = document.getElementById('progressDetails');
+            const currentSite = document.getElementById('currentSite');
+            const sitesProgress = document.getElementById('sitesProgress');
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            
+            // Update status and message
+            progressStatus.textContent = data.status || '{{ translations.searching }}';
+            progressMessage.textContent = data.message || '{{ translations.loading }}';
+            
+            // Update progress bar animation - always keep it animated during search
+            if (data.completed) {
+                progressBar.className = 'progress-bar bg-success';
+                progressBar.style.width = '100%';
+                loadingSpinner.style.display = 'none';
+            } else {
+                progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary';
+                progressBar.style.width = '100%';
+                loadingSpinner.style.display = 'block';
+            }
+            
+            // Show detailed progress if available
+            if (data.current_site) {
+                currentSite.textContent = `{{ translations.checking }} ${data.current_site}`;
+                progressDetails.style.display = 'block';
+            }
+            if (data.sites_checked) {
+                sitesProgress.textContent = ` | ${data.sites_checked} {{ translations.sites_checked }}`;
+            }
             
             if (data.completed) {
                 if (data.status === 'completed') {
-                    loadResults();
+                    progressStatus.textContent = '{{ translations.completed }}!';
+                    progressMessage.textContent = '{{ translations.loading }}';
+                    setTimeout(() => loadResults(), 500);
                 } else {
                     // Error occurred
                     document.getElementById('progressCard').innerHTML = `
                         <div class="card-body">
                             <div class="alert alert-danger">
                                 <i class="fas fa-exclamation-triangle me-2"></i>
-                                ${data.message}
+                                ${data.message || '{{ translations.error }}'}
                             </div>
                         </div>
                     `;
@@ -192,11 +243,21 @@ function loadResults() {
             allResults = data;
             displayResults(data);
             
-            // Setup export button
-            const exportBtn = document.getElementById('exportJsonBtn');
-            exportBtn.href = `/download/${searchId}/json`;
-            exportBtn.download = `sherlock_results_${searchId}.json`;
-            exportBtn.style.display = 'inline-block';
+            // Setup export buttons
+            const exportButtons = [
+                { id: 'exportJsonBtn', format: 'json', filename: `sherlock_results_${searchId}.json` },
+                { id: 'exportCsvBtn', format: 'csv', filename: `sherlock_results_${searchId}.csv` },
+                { id: 'exportPdfBtn', format: 'pdf', filename: `sherlock_results_${searchId}.pdf` },
+                { id: 'exportTxtBtn', format: 'txt', filename: `sherlock_results_${searchId}.txt` },
+                { id: 'exportZipBtn', format: 'zip', filename: `sherlock_results_${searchId}.zip` }
+            ];
+            
+            exportButtons.forEach(button => {
+                const btn = document.getElementById(button.id);
+                btn.href = `/download/${searchId}/${button.format}`;
+                btn.download = button.filename;
+                btn.style.display = 'inline-block';
+            });
             
             // Hide progress card and show results
             document.getElementById('progressCard').style.display = 'none';

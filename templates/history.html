@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>
+                <i class="fas fa-history text-primary me-3"></i>
+                {{ translations.search_history }}
+            </h2>
+            <a href="{{ url_for('index') }}" class="btn btn-primary">
+                <i class="fas fa-search me-2"></i>{{ translations.new_search }}
+            </a>
+        </div>
+
+        {% if history %}
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">{{ translations.my_searches }}</h5>
+                {% if history %}
+                <button class="btn btn-danger btn-sm" onclick="clearAllHistory()">
+                    <i class="fas fa-trash me-1"></i>
+                    {{ translations.clear_all }}
+                </button>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>{{ translations.timestamp }}</th>
+                                <th>{{ translations.usernames_searched }}</th>
+                                <th>{{ translations.profiles_found }}</th>
+                                <th>{{ translations.profiles_not_found }}</th>
+                                <th>{{ translations.total_sites_checked }}</th>
+                                <th>
+                                    {{ translations.actions }}
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for search in history %}
+                            <tr>
+                                <td>{{ search.timestamp[:19] }}</td>
+                                <td>{{ search.usernames|join(', ') }}</td>
+                                <td><span class="badge bg-success">{{ search.profiles_found }}</span></td>
+                                <td><span class="badge bg-secondary">{{ search.profiles_not_found }}</span></td>
+                                <td>{{ search.total_sites_checked }}</td>
+                                <td>
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        <a href="{{ url_for('view_history_item', search_id=search.search_id) }}" 
+                                           class="btn btn-outline-primary" 
+                                           title="{% if language == 'pt' %}Ver resultados{% else %}View results{% endif %}">
+                                            <i class="fas fa-eye"></i>
+                                        </a>
+                                        <button class="btn btn-outline-danger" 
+                                                onclick="deleteHistoryItem('{{ search.search_id }}')"
+                                                title="{% if language == 'pt' %}Excluir{% else %}Delete{% endif %}">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="card">
+            <div class="card-body text-center">
+                <i class="fas fa-search fa-3x text-muted mb-3"></i>
+                <h5>Nenhuma busca realizada ainda</h5>
+                <p class="text-muted">Faça sua primeira busca para ver o histórico aqui.</p>
+                <a href="{{ url_for('index') }}" class="btn btn-primary">
+                    <i class="fas fa-search me-2"></i>{{ translations.start_search }}
+                </a>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function deleteHistoryItem(searchId) {
+    const confirmMsg = '{% if language == "pt" %}Tem certeza que deseja excluir este item do histórico?{% else %}Are you sure you want to delete this item from history?{% endif %}';
+    
+    if (confirm(confirmMsg)) {
+        // Create a form and submit it
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `/history/delete/${searchId}`;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+function clearAllHistory() {
+    const confirmMsg = '{% if language == "pt" %}Tem certeza que deseja limpar todo o histórico? Esta ação não pode ser desfeita.{% else %}Are you sure you want to clear all history? This action cannot be undone.{% endif %}';
+    
+    if (confirm(confirmMsg)) {
+        // Create a form and submit it
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/history/clear';
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+</script>
+{% endblock %}

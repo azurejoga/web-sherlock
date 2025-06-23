@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-user-plus me-2"></i>
+                    {{ translations.register }}
+                </h5>
+            </div>
+            <div class="card-body">
+                <form action="{{ url_for('register') }}" method="POST">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">{{ translations.username_login }}</label>
+                        <input type="text" class="form-control" id="username" name="username" required minlength="3">
+                    </div>
+                    <div class="mb-3">
+                        <label for="email" class="form-label">{{ translations.email }}</label>
+                        <input type="email" class="form-control" id="email" name="email" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">{{ translations.password }}</label>
+                        <input type="password" class="form-control" id="password" name="password" required minlength="6">
+                    </div>
+                    <div class="mb-3">
+                        <label for="confirm_password" class="form-label">{{ translations.confirm_password }}</label>
+                        <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-user-plus me-2"></i>{{ translations.create_account }}
+                        </button>
+                    </div>
+                </form>
+                <hr>
+                <div class="text-center">
+                    <p>{{ translations.already_have_account }}</p>
+                    <a href="{{ url_for('login') }}" class="btn btn-outline-secondary">
+                        <i class="fas fa-sign-in-alt me-2"></i>{{ translations.login }}
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.querySelector('form').addEventListener('submit', function(e) {
+    const password = document.getElementById('password').value;
+    const confirmPassword = document.getElementById('confirm_password').value;
+    
+    if (password !== confirmPassword) {
+        e.preventDefault();
+        alert('As senhas não coincidem!');
+    }
+});
+</script>
+{% endblock %}
