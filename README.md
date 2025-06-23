@@ -104,8 +104,6 @@ web-sherlock/
 ├── sherlock/              # Embedded Sherlock project
 ├── uploads/               # Uploaded files
 ├── results/               # Exported results
-├── Dockerfile             # Docker setup
-├── docker-compose.yml     # Docker orchestration
 └── pyproject.toml         # Poetry dependencies
 ```
 
