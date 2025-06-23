@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-lg-8 mx-auto">
+        <!-- Page header -->
+        <div class="text-center mb-4">
+            <h1 class="display-4">
+                <i class="fas fa-search text-primary me-3"></i>
+                {{ translations.app_title }}
+            </h1>
+            <p class="lead text-muted">{{ translations.app_subtitle }}</p>
+        </div>
+
+
+
+        <!-- Search form -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-user-search me-2"></i>
+                    {% if language == 'pt' %}
+                        Buscar Usuários
+                    {% else %}
+                        Search Users
+                    {% endif %}
+                </h5>
+            </div>
+            <div class="card-body">
+                <form action="{{ url_for('search') }}" method="POST" enctype="multipart/form-data" id="searchForm">
+                    <!-- Username input -->
+                    <div class="mb-3">
+                        <label for="usernames" class="form-label">
+                            <i class="fas fa-users me-1"></i>{{ translations.usernames_label }}
+                        </label>
+                        <textarea class="form-control" id="usernames" name="usernames" rows="4" 
+                                placeholder="{{ translations.usernames_placeholder }}"></textarea>
+                        <div class="form-text">{{ translations.help_usernames }}</div>
+                    </div>
+
+                    <!-- JSON file upload -->
+                    <div class="mb-4">
+                        <label for="json_file" class="form-label">
+                            <i class="fas fa-file-upload me-1"></i>{{ translations.json_upload_label }}
+                        </label>
+                        <input type="file" class="form-control" id="json_file" name="json_file" accept=".json">
+                        <div class="form-text">{{ translations.help_json }}</div>
+                    </div>
+
+                    <hr>
+
+                    <!-- Search options -->
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>
+                                <i class="fas fa-cogs me-1"></i>{{ translations.search_options }}
+                            </h6>
+                            
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="print_all" name="print_all">
+                                <label class="form-check-label" for="print_all">{{ translations.print_all }}</label>
+                            </div>
+                            
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="print_found" name="print_found">
+                                <label class="form-check-label" for="print_found">{{ translations.print_found }}</label>
+                            </div>
+                            
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="nsfw" name="nsfw">
+                                <label class="form-check-label" for="nsfw">{{ translations.nsfw }}</label>
+                            </div>
+                            
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="local" name="local">
+                                <label class="form-check-label" for="local">{{ translations.local }}</label>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6">
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <!-- Advanced options -->
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="timeout" class="form-label">
+                                    <i class="fas fa-clock me-1"></i>{{ translations.timeout_label }}
+                                </label>
+                                <input type="number" class="form-control" id="timeout" name="timeout" 
+                                       placeholder="60" min="1" max="300">
+                                <div class="form-text">{{ translations.help_timeout }}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Submit button -->
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
+                            <i class="fas fa-search me-2"></i>{{ translations.start_search }}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Form validation
+document.getElementById('searchForm').addEventListener('submit', function(e) {
+    const usernames = document.getElementById('usernames').value.trim();
+    const jsonFile = document.getElementById('json_file').files[0];
+    
+    if (!usernames && !jsonFile) {
+        e.preventDefault();
+        alert('{{ translations.error_no_usernames }}');
+        return false;
+    }
+    
+    // Show loading state
+    const submitBtn = document.getElementById('submitBtn');
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>{{ translations.searching }}';
+    submitBtn.disabled = true;
+});
+</script>
+{% endblock %}
