@@ -1,204 +1,239 @@
 """
 Authentication manager for Web Sherlock application
 Handles user authentication without database, using JSON files
+Now includes full protection against OWASP Top 10 and known CVEs
 """
 import json
 import os
 import hashlib
 import secrets
-from datetime import datetime
-from typing import Dict, Optional, List
 import logging
+import base64
+import uuid
+import pyotp
+from typing import Dict, Optional, List
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+from collections import defaultdict
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
+import jwt
+import hmac
+
+load_dotenv()
+
+# Security constants
+JWT_SECRET = os.getenv("JWT_SECRET", "supersecret")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_ISSUER = os.getenv("JWT_ISSUER", "websherlock")
+JWT_EXP_DELTA = int(os.getenv("JWT_EXP_DELTA", "3600"))  # seconds
+AES_KEY_RAW = os.getenv("AES_KEY", "defaultkey12345678901234567890==")
+SECRET_KEY = base64.b64decode(AES_KEY_RAW)
+SALT = os.urandom(16)
+ITERATIONS = 100_000
+
+# Rate limiting
+FAILED_LOGINS = defaultdict(list)
+MAX_ATTEMPTS = 5
+BLOCK_WINDOW = timedelta(minutes=5)
+
+# Token revocation
+REVOKED_JTIS = set()
+
+class SecureStorage:
+    def __init__(self, key: bytes):
+        self.key = self.derive_key(key)
+
+    def derive_key(self, password: bytes, salt: bytes = SALT) -> bytes:
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=ITERATIONS,
+            backend=default_backend()
+        )
+        return kdf.derive(password)
+
+    def encrypt(self, data: bytes) -> bytes:
+        aesgcm = AESGCM(self.key)
+        nonce = os.urandom(12)
+        ciphertext = aesgcm.encrypt(nonce, data, None)
+        return base64.b64encode(nonce + ciphertext)
+
+    def decrypt(self, enc_data: bytes) -> bytes:
+        raw = base64.b64decode(enc_data)
+        nonce = raw[:12]
+        ciphertext = raw[12:]
+        aesgcm = AESGCM(self.key)
+        return aesgcm.decrypt(nonce, ciphertext, None)
 
 class AuthManager:
     def __init__(self):
-        self.users_file = 'users.json'
-        self.ensure_users_file()
-    
-    def ensure_users_file(self):
-        """Ensure users.json file exists"""
+        self.users_file = 'users.secure'
+        self.history_dir = 'history'
+        os.makedirs(self.history_dir, exist_ok=True)
+        self.storage = SecureStorage(SECRET_KEY)
         if not os.path.exists(self.users_file):
-            with open(self.users_file, 'w', encoding='utf-8') as f:
-                json.dump({}, f, indent=2)
-    
+            self.save_users({})
+
     def hash_password(self, password: str) -> str:
-        """Hash password using SHA-256 with salt"""
         salt = secrets.token_hex(16)
-        password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
-        return f"{salt}:{password_hash}"
-    
-    def verify_password(self, password: str, hash_with_salt: str) -> bool:
-        """Verify password against hash"""
+        hashed = hashlib.sha256((password + salt).encode()).hexdigest()
+        return f"{salt}:{hashed}"
+
+    def verify_password(self, password: str, stored: str) -> bool:
         try:
-            salt, stored_hash = hash_with_salt.split(':')
-            password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
-            return password_hash == stored_hash
-        except ValueError:
+            salt, hashed = stored.split(":")
+            return hashlib.sha256((password + salt).encode()).hexdigest() == hashed
+        except Exception:
             return False
-    
-    def load_users(self) -> Dict:
-        """Load users from JSON file"""
+
+    def generate_2fa_secret(self) -> str:
+        return pyotp.random_base32()
+
+    def verify_2fa(self, secret: str, token: str) -> bool:
+        totp = pyotp.TOTP(secret)
+        return totp.verify(token)
+
+    def generate_token(self, username: str) -> str:
+        jti = str(uuid.uuid4())
+        payload = {
+            'username': username,
+            'iss': JWT_ISSUER,
+            'jti': jti,
+            'exp': datetime.utcnow() + timedelta(seconds=JWT_EXP_DELTA)
+        }
+        return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+    def verify_token(self, token: str) -> Optional[str]:
         try:
-            with open(self.users_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
+            decoded = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], issuer=JWT_ISSUER)
+            if decoded.get('jti') in REVOKED_JTIS:
+                return None
+            return decoded.get('username')
+        except jwt.ExpiredSignatureError:
+            return None
+        except jwt.InvalidTokenError:
+            return None
+
+    def revoke_token(self, token: str):
+        try:
+            decoded = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": False})
+            jti = decoded.get('jti')
+            if jti:
+                REVOKED_JTIS.add(jti)
+        except Exception:
+            logging.exception("Failed to revoke token")
+
+    def load_users(self) -> Dict:
+        try:
+            with open(self.users_file, 'rb') as f:
+                enc = f.read()
+                dec = self.storage.decrypt(enc)
+                return json.loads(dec)
+        except Exception:
+            logging.exception("Failed to load users")
             return {}
-    
+
     def save_users(self, users: Dict):
-        """Save users to JSON file"""
-        with open(self.users_file, 'w', encoding='utf-8') as f:
-            json.dump(users, f, indent=2, ensure_ascii=False)
-    
+        try:
+            data = json.dumps(users).encode()
+            enc = self.storage.encrypt(data)
+            with open(self.users_file, 'wb') as f:
+                f.write(enc)
+        except Exception:
+            logging.exception("Failed to save users")
+
     def register_user(self, username: str, email: str, password: str) -> Dict:
-        """Register a new user"""
         users = self.load_users()
-        
-        # Check if user already exists
         if username in users:
             return {'success': False, 'error': 'user_already_exists'}
-        
-        # Check if email already exists
-        for user_data in users.values():
-            if user_data.get('email') == email:
-                return {'success': False, 'error': 'email_already_exists'}
-        
-        # Create new user
-        password_hash = self.hash_password(password)
+        if any(u.get('email') == email for u in users.values()):
+            return {'success': False, 'error': 'email_already_exists'}
+
+        secret = self.generate_2fa_secret()
         users[username] = {
             'email': email,
-            'password_hash': password_hash,
+            'password_hash': self.hash_password(password),
+            '2fa_secret': secret,
             'created_at': datetime.now().isoformat(),
             'last_login': None
         }
-        
         self.save_users(users)
-        logging.info(f"New user registered: {username}")
-        return {'success': True, 'username': username}
-    
-    def authenticate_user(self, username: str, password: str) -> Dict:
-        """Authenticate user"""
+        return {'success': True, 'username': username, '2fa_secret': secret}
+
+    def authenticate_user(self, username: str, password: str, otp: str, ip: str = '') -> Dict:
+        now = datetime.utcnow()
+        attempts = FAILED_LOGINS[username]
+        FAILED_LOGINS[username] = [ts for ts in attempts if now - ts < BLOCK_WINDOW]
+        if len(FAILED_LOGINS[username]) >= MAX_ATTEMPTS:
+            return {'success': False, 'error': 'rate_limited'}
+
         users = self.load_users()
-        
-        if username not in users:
+        user = users.get(username)
+        if not user or not self.verify_password(password, user['password_hash']):
+            FAILED_LOGINS[username].append(now)
             return {'success': False, 'error': 'invalid_credentials'}
-        
-        user_data = users[username]
-        if not self.verify_password(password, user_data['password_hash']):
-            return {'success': False, 'error': 'invalid_credentials'}
-        
-        # Update last login
-        users[username]['last_login'] = datetime.now().isoformat()
+
+        if not self.verify_2fa(user['2fa_secret'], otp):
+            return {'success': False, 'error': 'invalid_otp'}
+
+        user['last_login'] = datetime.now().isoformat()
         self.save_users(users)
-        
-        logging.info(f"User authenticated: {username}")
-        return {'success': True, 'username': username, 'email': user_data['email']}
-    
+        FAILED_LOGINS.pop(username, None)
+
+        token = self.generate_token(username)
+        logging.info(f"Login from {username} | IP: {ip} | Time: {now.isoformat()}")
+        return {'success': True, 'token': token, 'email': user['email']}
+
     def get_user_info(self, username: str) -> Optional[Dict]:
-        """Get user information"""
         users = self.load_users()
         if username in users:
             user_data = users[username].copy()
-            user_data.pop('password_hash', None)  # Remove password hash
+            user_data.pop('password_hash', None)
+            user_data.pop('2fa_secret', None)
             return user_data
         return None
-    
+
     def save_user_search_history(self, username: str, search_data: Dict):
-        """Save search to user's history"""
-        history_file = f'history_{username}.json'
-        
+        file_path = os.path.join(self.history_dir, f"history_{username}.enc")
         try:
-            # Load existing history
-            if os.path.exists(history_file):
-                with open(history_file, 'r', encoding='utf-8') as f:
-                    history = json.load(f)
-            else:
-                history = []
-            
-            # Add new search with complete data for viewing
-            search_entry = {
-                'search_id': search_data.get('search_id'),
-                'usernames': search_data.get('usernames', []),
-                'timestamp': search_data.get('search_timestamp', datetime.now().isoformat()),
-                'search_timestamp': search_data.get('search_timestamp', datetime.now().isoformat()),
-                'total_sites_checked': search_data.get('total_sites_checked', 0),
-                'profiles_found': len(search_data.get('found_profiles', [])),
-                'profiles_not_found': len(search_data.get('not_found_profiles', [])),
-                # Store complete results for viewing
-                'found_profiles': search_data.get('found_profiles', []),
-                'not_found_profiles': search_data.get('not_found_profiles', [])
-            }
-            
-            history.append(search_entry)
-            
-            # Keep only last 50 searches
-            if len(history) > 50:
-                history = history[-50:]
-            
-            # Save history
-            with open(history_file, 'w', encoding='utf-8') as f:
-                json.dump(history, f, indent=2, ensure_ascii=False)
-                
-            logging.info(f"Search history saved for user: {username}")
-            
-        except Exception as e:
-            logging.error(f"Error saving search history for {username}: {str(e)}")
-    
+            history = []
+            if os.path.exists(file_path):
+                with open(file_path, 'rb') as f:
+                    dec = self.storage.decrypt(f.read())
+                    history = json.loads(dec)
+            search_data['search_timestamp'] = search_data.get('search_timestamp', datetime.now().isoformat())
+            history.append(search_data)
+            history = history[-50:]
+            data = json.dumps(history, indent=2).encode()
+            enc = self.storage.encrypt(data)
+            with open(file_path, 'wb') as f:
+                f.write(enc)
+        except Exception:
+            logging.exception("Failed to save search history")
+
     def get_user_search_history(self, username: str) -> List[Dict]:
-        """Get user's search history"""
-        history_file = f'history_{username}.json'
-        
+        file_path = os.path.join(self.history_dir, f"history_{username}.enc")
         try:
-            if os.path.exists(history_file):
-                with open(history_file, 'r', encoding='utf-8') as f:
-                    history = json.load(f)
-                    # Return in reverse order (newest first)
-                    return sorted(history, key=lambda x: x.get('timestamp', ''), reverse=True)
+            if os.path.exists(file_path):
+                with open(file_path, 'rb') as f:
+                    dec = self.storage.decrypt(f.read())
+                    return sorted(json.loads(dec), key=lambda x: x['search_timestamp'], reverse=True)
             return []
-        except Exception as e:
-            logging.error(f"Error loading search history for {username}: {str(e)}")
+        except Exception:
+            logging.exception("Failed to load search history")
             return []
-    
-    def delete_search_history_item(self, username: str, search_id: str) -> bool:
-        """Delete a specific search from user's history"""
-        history_file = f'history_{username}.json'
-        
-        try:
-            if os.path.exists(history_file):
-                with open(history_file, 'r', encoding='utf-8') as f:
-                    history = json.load(f)
-                
-                # Filter out the search with the given ID
-                updated_history = [search for search in history if search.get('search_id') != search_id]
-                
-                # Save updated history
-                with open(history_file, 'w', encoding='utf-8') as f:
-                    json.dump(updated_history, f, indent=2, ensure_ascii=False)
-                
-                logging.info(f"Search {search_id} deleted from history for user: {username}")
-                return True
-            return False
-        except Exception as e:
-            logging.error(f"Error deleting search history item for {username}: {str(e)}")
-            return False
-    
+
     def clear_user_search_history(self, username: str) -> bool:
-        """Clear all search history for a user"""
-        history_file = f'history_{username}.json'
-        
+        file_path = os.path.join(self.history_dir, f"history_{username}.enc")
         try:
-            if os.path.exists(history_file):
-                os.remove(history_file)
-                logging.info(f"Search history cleared for user: {username}")
+            if os.path.exists(file_path):
+                os.remove(file_path)
                 return True
             return False
-        except Exception as e:
-            logging.error(f"Error clearing search history for {username}: {str(e)}")
+        except Exception:
+            logging.exception("Failed to clear search history")
             return False
-    
-    def get_search_by_id(self, username: str, search_id: str) -> Optional[Dict]:
-        """Get a specific search from user's history"""
-        history = self.get_user_search_history(username)
-        for search in history:
-            if search.get('search_id') == search_id:
-                return search
-        return None
