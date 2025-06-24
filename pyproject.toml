@@ -29,7 +29,7 @@ stem = "^1.8.2"
 torrequest = "^0.1.0"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^7.4.0"
+pytest = "^8.4.1"
 black = "^25.1.0"
 flake8 = "^7.3.0"
 mypy = "^1.5.0"
