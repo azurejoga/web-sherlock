@@ -2,20 +2,20 @@
 
 A bilingual web interface built with Flask to search usernames across multiple social networks using the Sherlock Project, with authentication system, search history, and multiple export formats.
 
-## 🌟 Features
+##  Features
 
-* 🔍 **Advanced Search**: Look up usernames on 400+ social networks
-* 👥 **Multiple Users**: Search for multiple usernames (separated by lines or commas)
-* 🌍 **Bilingual Interface**: Portuguese and English with JSON-based translation system
-* 🔐 **Authentication System**: Registration, login, and session control
-* 📊 **Real-Time Monitoring**: Animated progress bar (without percentage)
-* 📈 **Search History**: View, delete, and manage past searches
-* 📄 **Multiple Export Formats**: JSON, CSV, PDF, TXT, and ZIP
-* ⏱️ **Rate Limiting**: 60-second cooldown between searches
-* 🎨 **Responsive Interface**: Modern UI with Bootstrap 5
-* ⚡ **Asynchronous Processing**: Background search with live updates
+* **Advanced Search**: Look up usernames on 400+ social networks
+* **Multiple Users**: Search for multiple usernames (separated by lines or commas)
+* **Bilingual Interface**: Portuguese and English with JSON-based translation system
+* **Authentication System**: Registration, login, and session control
+* **Real-Time Monitoring**: Animated progress bar (without percentage)
+* **Search History**: View, delete, and manage past searches
+* **Multiple Export Formats**: JSON, CSV, PDF, TXT, and ZIP
+* **Rate Limiting**: 60-second cooldown between searches
+* **Responsive Interface**: Modern UI with Bootstrap 5
+* **Asynchronous Processing**: Background search with live updates
 
-## 🛠️ Technologies Used
+## Technologies Used
 
 * **Backend**: Python 3.11+, Flask 3.0, Gunicorn
 * **Frontend**: Bootstrap 5, JavaScript, Font Awesome
@@ -24,7 +24,7 @@ A bilingual web interface built with Flask to search usernames across multiple s
 * **Authentication**: JSON file-based system
 * **Internationalization**: JSON translation system
 
-## 🚀 Installation & Execution
+## Installation & Execution
 
 ### Method 1: Local Installation
 
@@ -53,7 +53,7 @@ python main.py
 
 The application will be available at `http://localhost:5000`
 
-## 📋 How to Use
+## How to Use
 
 ### 1. Register and Log In
 
@@ -81,7 +81,7 @@ The application will be available at `http://localhost:5000`
 * **TXT**: Plain text
 * **ZIP**: All formats in a compressed file
 
-### 🗂️ Project Structure
+### Project Structure
 
 ```
 web-sherlock/
@@ -100,7 +100,7 @@ web-sherlock/
 └── pyproject.toml         # Poetry dependencies
 ```
 
-## 🌐 Internationalization
+## Internationalization
 
 Supports multiple languages via JSON files:
 
@@ -109,14 +109,14 @@ Supports multiple languages via JSON files:
 
 To add a new language, create a JSON file in the `translations/` directory with corresponding keys and translations.
 
-## 🔒 Authentication System
+## Authentication System
 
 * **File-Based**: No database required
 * **Encrypted Passwords**: SHA-256 with salt
 * **Secure Sessions**: Managed by Flask
 * **User-Specific History**: Each user has private search history
 
-## 📊 Monitoring
+## Monitoring
 
 The system includes:
 
@@ -125,7 +125,7 @@ The system includes:
 * **Detailed Feedback**: Current site being checked
 * **Counters**: Number of sites scanned
 
-## 👨‍💻 Author
+##  Author
 
 **Juan Mathews Rebello Santos**
 
@@ -133,7 +133,7 @@ The system includes:
 * LinkedIn: [Juan Mathews Rebello Santos](https://linkedin.com/in/juan-mathews-rebello-santos-/)
 * Project: [Web Sherlock](https://github.com/azurejoga/web-sherlock/)
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork this repository
 2. Create a branch (`git checkout -b feature/AmazingFeature`)
@@ -141,17 +141,17 @@ The system includes:
 4. Push the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
-## 📝 License
+##  License
 
 This project is licensed under the MIT License. See the `LICENSE` file for more details.
 
-## 🔗 Useful Links
+##  Useful Links
 
 * [GitHub Repository](https://github.com/azurejoga/web-sherlock/)
 * [Original Sherlock Project](https://github.com/sherlock-project/sherlock)
 * [Flask Documentation](https://flask.palletsprojects.com/)
 * [Bootstrap 5](https://getbootstrap.com/)
 
-## 📞 Support
+## Support
 
 To report bugs or request features, open an [issue on GitHub](https://github.com/azurejoga/web-sherlock/issues).
