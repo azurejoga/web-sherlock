@@ -1,113 +1,192 @@
 {% extends "base.html" %}
 
-{% block content %}
-<div class="row">
-    <div class="col-12">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2>
-                <i class="fas fa-history text-primary me-3"></i>
-                {{ translations.search_history }}
-            </h2>
-            <a href="{{ url_for('index') }}" class="btn btn-primary">
-                <i class="fas fa-search me-2"></i>{{ translations.new_search }}
-            </a>
-        </div>
+{% block title %}{{ translations.history_title }}{% endblock %}
 
-        {% if history %}
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">{{ translations.my_searches }}</h5>
-                {% if history %}
-                <button class="btn btn-danger btn-sm" onclick="clearAllHistory()">
-                    <i class="fas fa-trash me-1"></i>
-                    {{ translations.clear_all }}
-                </button>
-                {% endif %}
-            </div>
-            <div class="card-body">
-                <div class="table-responsive">
-                    <table class="table table-striped">
-                        <thead>
-                            <tr>
-                                <th>{{ translations.timestamp }}</th>
-                                <th>{{ translations.usernames_searched }}</th>
-                                <th>{{ translations.profiles_found }}</th>
-                                <th>{{ translations.profiles_not_found }}</th>
-                                <th>{{ translations.total_sites_checked }}</th>
-                                <th>
-                                    {{ translations.actions }}
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for search in history %}
-                            <tr>
-                                <td>{{ search.timestamp[:19] }}</td>
-                                <td>{{ search.usernames|join(', ') }}</td>
-                                <td><span class="badge bg-success">{{ search.profiles_found }}</span></td>
-                                <td><span class="badge bg-secondary">{{ search.profiles_not_found }}</span></td>
-                                <td>{{ search.total_sites_checked }}</td>
-                                <td>
-                                    <div class="btn-group btn-group-sm" role="group">
-                                        <a href="{{ url_for('view_history_item', search_id=search.search_id) }}" 
-                                           class="btn btn-outline-primary" 
-                                           title="{% if language == 'pt' %}Ver resultados{% else %}View results{% endif %}">
-                                            <i class="fas fa-eye"></i>
-                                        </a>
-                                        <button class="btn btn-outline-danger" 
-                                                onclick="deleteHistoryItem('{{ search.search_id }}')"
-                                                title="{% if language == 'pt' %}Excluir{% else %}Delete{% endif %}">
-                                            <i class="fas fa-trash"></i>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2><i class="fas fa-history me-2"></i>{{ translations.history_title }}</h2>
+                <div>
+                    <a href="{{ url_for('index') }}" class="btn btn-primary me-2">
+                        <i class="fas fa-search me-2"></i>{{ translations.new_search }}
+                    </a>
+                    {% if history %}
+                    <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#clearHistoryModal">
+                        <i class="fas fa-trash me-2"></i>{{ translations.clear_history }}
+                    </button>
+                    {% endif %}
                 </div>
             </div>
-        </div>
-        {% else %}
-        <div class="card">
-            <div class="card-body text-center">
-                <i class="fas fa-search fa-3x text-muted mb-3"></i>
-                <h5>Nenhuma busca realizada ainda</h5>
-                <p class="text-muted">Faça sua primeira busca para ver o histórico aqui.</p>
+
+            {% if stats and stats.total_searches > 0 %}
+            <div class="row mb-4">
+                <div class="col-md-3">
+                    <div class="card bg-primary text-white">
+                        <div class="card-body text-center">
+                            <h4>{{ stats.total_searches }}</h4>
+                            <p class="mb-0">{{ translations.total_searches }}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-success text-white">
+                        <div class="card-body text-center">
+                            <h4>{{ stats.total_usernames_searched }}</h4>
+                            <p class="mb-0">{{ translations.usernames_searched }}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-info text-white">
+                        <div class="card-body text-center">
+                            <h4>{{ stats.total_results_found }}</h4>
+                            <p class="mb-0">{{ translations.profiles_found }}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-warning text-white">
+                        <div class="card-body text-center">
+                            <h4>{{ (stats.total_usernames_searched - stats.total_results_found) or 0 }}</h4>
+                            <p class="mb-0">{{ translations.profiles_not_found }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if history %}
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">{{ translations.search_results }}</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>{{ translations.search_date }}</th>
+                                    <th>{{ translations.search_usernames }}</th>
+                                    <th>{{ translations.profiles_found }}</th>
+                                    <th>{{ translations.status }}</th>
+                                    <th>{{ translations.export_options }}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for search in history %}
+                                <tr>
+                                    <td>
+                                        {% if search.timestamp %}
+                                            {{ search.timestamp[:19].replace('T', ' ') }}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-secondary">{{ search.usernames|length }}</span>
+                                        {% for username in search.usernames[:3] %}
+                                            <span class="badge bg-light text-dark">{{ username }}</span>
+                                        {% endfor %}
+                                        {% if search.usernames|length > 3 %}
+                                            <span class="badge bg-light text-dark">+{{ search.usernames|length - 3 }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-success">{{ search.found_count or 0 }}</span>
+                                        /
+                                        <span class="badge bg-secondary">{{ search.results_count or 0 }}</span>
+                                    </td>
+                                    <td>
+                                        {% if search.status == 'completed' %}
+                                            <span class="badge bg-success">{{ translations.search_completed }}</span>
+                                        {% elif search.status == 'running' %}
+                                            <span class="badge bg-primary">{{ translations.searching }}</span>
+                                        {% else %}
+                                            <span class="badge bg-warning">{{ search.status }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm" role="group">
+                                            {% if search.results_file %}
+                                            <a href="{{ url_for('view_search_results', search_id=search.search_id) }}" 
+                                               class="btn btn-outline-primary" title="{{ translations.view_results }}">
+                                                <i class="fas fa-eye"></i>
+                                            </a>
+                                            {% endif %}
+                                            <button type="button" class="btn btn-outline-danger" 
+                                                    onclick="confirmDelete('{{ search.search_id }}')" 
+                                                    title="{{ translations.delete_search }}">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+                <i class="fas fa-history fa-3x text-muted mb-3"></i>
+                <h4 class="text-muted">{{ translations.no_history }}</h4>
+                <p class="text-muted">{{ translations.help_usernames }}</p>
                 <a href="{{ url_for('index') }}" class="btn btn-primary">
                     <i class="fas fa-search me-2"></i>{{ translations.start_search }}
                 </a>
             </div>
+            {% endif %}
         </div>
-        {% endif %}
+    </div>
+</div>
+
+<!-- Clear History Modal -->
+<div class="modal fade" id="clearHistoryModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">{{ translations.clear_history }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>{{ translations.confirm_clear }}</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ translations.cancel if translations.cancel else 'Cancelar' }}</button>
+                <form method="POST" action="{{ url_for('clear_history') }}" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">{{ translations.clear_history }}</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Search Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">{{ translations.delete_search }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>{{ translations.confirm_delete }}</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ translations.cancel if translations.cancel else 'Cancelar' }}</button>
+                <form method="POST" id="deleteForm" style="display: inline;">
+                    <button type="submit" class="btn btn-danger">{{ translations.delete_search }}</button>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
 
 <script>
-function deleteHistoryItem(searchId) {
-    const confirmMsg = '{% if language == "pt" %}Tem certeza que deseja excluir este item do histórico?{% else %}Are you sure you want to delete this item from history?{% endif %}';
-    
-    if (confirm(confirmMsg)) {
-        // Create a form and submit it
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = `/history/delete/${searchId}`;
-        document.body.appendChild(form);
-        form.submit();
-    }
-}
-
-function clearAllHistory() {
-    const confirmMsg = '{% if language == "pt" %}Tem certeza que deseja limpar todo o histórico? Esta ação não pode ser desfeita.{% else %}Are you sure you want to clear all history? This action cannot be undone.{% endif %}';
-    
-    if (confirm(confirmMsg)) {
-        // Create a form and submit it
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = '/history/clear';
-        document.body.appendChild(form);
-        form.submit();
-    }
+function confirmDelete(searchId) {
+    document.getElementById('deleteForm').action = `/history/delete/${searchId}`;
+    new bootstrap.Modal(document.getElementById('deleteModal')).show();
 }
 </script>
 {% endblock %}

@@ -1,60 +1,138 @@
-{% extends "base.html" %}
-
-{% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">
-                    <i class="fas fa-user-plus me-2"></i>
-                    {{ translations.register }}
-                </h5>
-            </div>
-            <div class="card-body">
-                <form action="{{ url_for('register') }}" method="POST">
-                    <div class="mb-3">
-                        <label for="username" class="form-label">{{ translations.username_login }}</label>
-                        <input type="text" class="form-control" id="username" name="username" required minlength="3">
-                    </div>
-                    <div class="mb-3">
-                        <label for="email" class="form-label">{{ translations.email }}</label>
-                        <input type="email" class="form-control" id="email" name="email" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="password" class="form-label">{{ translations.password }}</label>
-                        <input type="password" class="form-control" id="password" name="password" required minlength="6">
-                    </div>
-                    <div class="mb-3">
-                        <label for="confirm_password" class="form-label">{{ translations.confirm_password }}</label>
-                        <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
-                    </div>
-                    <div class="d-grid">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-user-plus me-2"></i>{{ translations.create_account }}
-                        </button>
-                    </div>
-                </form>
-                <hr>
-                <div class="text-center">
-                    <p>{{ translations.already_have_account }}</p>
-                    <a href="{{ url_for('login') }}" class="btn btn-outline-secondary">
-                        <i class="fas fa-sign-in-alt me-2"></i>{{ translations.login }}
+<!DOCTYPE html>
+<html lang="{{ language }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ translations.register_title }} - {{ translations.app_title }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('login') }}">
+                <i class="fas fa-search me-2"></i>{{ translations.app_title }}
+            </a>
+            <div class="navbar-nav ms-auto">
+                <div class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                        <i class="fas fa-globe me-1"></i>{{ translations.language }}
                     </a>
+                    <ul class="dropdown-menu">
+                        {% for lang_code in languages %}
+                        <li>
+                            <a class="dropdown-item {% if lang_code == language %}active{% endif %}" 
+                               href="{{ url_for('set_language', language=lang_code) }}">
+                                {% if lang_code == 'pt' %}Português{% else %}English{% endif %}
+                            </a>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-5">
+        <div class="row justify-content-center">
+            <div class="col-md-6 col-lg-5">
+                <div class="card shadow">
+                    <div class="card-header bg-success text-white text-center">
+                        <h4 class="mb-0">
+                            <i class="fas fa-user-plus me-2"></i>{{ translations.register_title }}
+                        </h4>
+                    </div>
+                    <div class="card-body">
+                        {% with messages = get_flashed_messages(with_categories=true) %}
+                            {% if messages %}
+                                {% for category, message in messages %}
+                                    <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                                        {{ message }}
+                                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                                    </div>
+                                {% endfor %}
+                            {% endif %}
+                        {% endwith %}
+
+                        <form method="POST" id="registerForm">
+                            <div class="mb-3">
+                                <label for="username" class="form-label">{{ translations.username_label }}</label>
+                                <div class="input-group">
+                                    <span class="input-group-text"><i class="fas fa-user"></i></span>
+                                    <input type="text" class="form-control" id="username" name="username" 
+                                           required minlength="3" maxlength="50">
+                                </div>
+                                <small class="form-text text-muted">{{ translations.error_invalid_username_length }}</small>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="email" class="form-label">{{ translations.email_label }}</label>
+                                <div class="input-group">
+                                    <span class="input-group-text"><i class="fas fa-envelope"></i></span>
+                                    <input type="email" class="form-control" id="email" name="email" required>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="password" class="form-label">{{ translations.password_label }}</label>
+                                <div class="input-group">
+                                    <span class="input-group-text"><i class="fas fa-lock"></i></span>
+                                    <input type="password" class="form-control" id="password" name="password" 
+                                           required minlength="6">
+                                </div>
+                                <small class="form-text text-muted">{{ translations.error_password_too_short }}</small>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="confirm_password" class="form-label">{{ translations.confirm_password_label }}</label>
+                                <div class="input-group">
+                                    <span class="input-group-text"><i class="fas fa-lock"></i></span>
+                                    <input type="password" class="form-control" id="confirm_password" name="confirm_password" 
+                                           required minlength="6">
+                                </div>
+                                <div id="password-match-feedback" class="invalid-feedback"></div>
+                            </div>
+                            
+                            <div class="d-grid">
+                                <button type="submit" class="btn btn-success" id="registerBtn">
+                                    <i class="fas fa-user-plus me-2"></i>{{ translations.register_button }}
+                                </button>
+                            </div>
+                        </form>
+                        
+                        <hr>
+                        <div class="text-center">
+                            <p class="mb-0">{{ translations.have_account }}</p>
+                            <a href="{{ url_for('login') }}" class="btn btn-outline-primary btn-sm">
+                                <i class="fas fa-sign-in-alt me-2"></i>{{ translations.login_button }}
+                            </a>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
-</div>
 
-<script>
-document.querySelector('form').addEventListener('submit', function(e) {
-    const password = document.getElementById('password').value;
-    const confirmPassword = document.getElementById('confirm_password').value;
-    
-    if (password !== confirmPassword) {
-        e.preventDefault();
-        alert('As senhas não coincidem!');
-    }
-});
-</script>
-{% endblock %}
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Password confirmation validation
+        document.getElementById('confirm_password').addEventListener('input', function() {
+            const password = document.getElementById('password').value;
+            const confirmPassword = this.value;
+            const feedback = document.getElementById('password-match-feedback');
+            const registerBtn = document.getElementById('registerBtn');
+            
+            if (confirmPassword && password !== confirmPassword) {
+                this.classList.add('is-invalid');
+                feedback.textContent = '{{ translations.error_passwords_dont_match }}';
+                registerBtn.disabled = true;
+            } else {
+                this.classList.remove('is-invalid');
+                feedback.textContent = '';
+                registerBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
