@@ -2,22 +2,75 @@ import os
 import json
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
+from functools import wraps
 from flask import Flask, render_template, request, jsonify, send_file, session, redirect, url_for, flash
 from werkzeug.utils import secure_filename
 import logging
-from functools import wraps
 
 from sherlock_runner import SherlockRunner
 from export_utils import ExportUtils
-from translations import get_translations, get_supported_languages, get_language_display_names
+from translations import get_translations, get_supported_languages
 from auth_manager import AuthManager
+from history_manager import HistoryManager
 
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
+# Configure secure logging to prevent injection
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+
+# Create sanitized logger
+logger = logging.getLogger(__name__)
+
+def safe_log(level, message, *args, **kwargs):
+    """Secure logging function that prevents log injection"""
+    try:
+        # Sanitize message and arguments
+        if isinstance(message, str):
+            message = message.replace('\n', ' ').replace('\r', ' ')[:500]
+        sanitized_args = []
+        for arg in args:
+            if isinstance(arg, str):
+                sanitized_args.append(str(arg).replace('\n', ' ').replace('\r', ' ')[:100])
+            else:
+                sanitized_args.append(str(arg)[:100])
+        
+        logger.log(level, message, *sanitized_args, **kwargs)
+    except Exception:
+        logger.error("Logging error occurred")
+
+def _sanitize_username(username):
+    """Sanitize username input for security"""
+    import re
+    if not username:
+        return ""
+    
+    # Remove potentially dangerous characters
+    username = re.sub(r'[<>"\'/\\;=&$%]', '', str(username))
+    # Limit length to prevent buffer overflows
+    username = username[:50]
+    # Remove leading/trailing whitespace
+    username = username.strip()
+    
+    return username
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
+
+# Security headers middleware
+@app.after_request
+def apply_security_headers(response):
+    """Apply security headers to all responses"""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:; connect-src 'self'"
+    return response
 
 # Configuration
 UPLOAD_FOLDER = 'uploads'
@@ -31,58 +84,64 @@ os.makedirs(RESULTS_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['RESULTS_FOLDER'] = RESULTS_FOLDER
 
-# Global variables for tracking search progress and rate limiting
+# Initialize authentication and history managers
+auth_manager = AuthManager()
+history_manager = HistoryManager()
+
+# Add context processor for global template variables
+@app.context_processor
+def inject_global_vars():
+    """Inject global variables into all templates"""
+    return {
+        'supported_languages': get_supported_languages(),
+        'current_language': session.get('language', 'en')
+    }
+
+# Global variables for tracking search progress and preventing duplicates
 search_progress = {}
 search_results = {}
-search_cooldowns = {}  # Track search cooldowns per user
+active_searches = {}  # Track active searches by user to prevent duplicates
 
-# Initialize authentication manager
-auth_manager = AuthManager()
+# Authentication decorator
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        token = session.get('auth_token')
+        if not token:
+            language = session.get('language', 'en')
+            translations = get_translations(language)
+            flash(translations.get('error_login_required', 'Login required'), 'error')
+            return redirect(url_for('login'))
+        
+        user = auth_manager.verify_token(token)
+        if not user:
+            session.pop('auth_token', None)
+            session.pop('current_user', None)
+            language = session.get('language', 'en')
+            translations = get_translations(language)
+            flash(translations.get('error_login_required', 'Login required'), 'error')
+            return redirect(url_for('login'))
+        
+        session['current_user'] = user
+        return f(*args, **kwargs)
+    return decorated_function
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def login_required(f):
-    """Decorator to require user login"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            language = session.get('language', 'en')
-            translations = get_translations(language)
-            flash(translations['login_required'], 'error')
-            return redirect(url_for('login'))
-        return f(*args, **kwargs)
-    return decorated_function
-
-def check_search_cooldown(user_id):
-    """Check if user is in search cooldown period"""
-    if user_id in search_cooldowns:
-        cooldown_end = search_cooldowns[user_id]
-        if datetime.now() < cooldown_end:
-            remaining = (cooldown_end - datetime.now()).total_seconds()
-            return False, int(remaining)
-    return True, 0
-
-def set_search_cooldown(user_id):
-    """Set search cooldown for user (60 seconds)"""
-    search_cooldowns[user_id] = datetime.now() + timedelta(seconds=60)
-
 @app.route('/')
+@login_required
 def index():
     language = session.get('language', 'en')
     translations = get_translations(language)
-    
-    # Check search cooldown for logged in users
-    cooldown_remaining = 0
-    if 'user_id' in session:
-        can_search, cooldown_remaining = check_search_cooldown(session['user_id'])
-    
+    user = session.get('current_user')
     return render_template('index.html', 
                          translations=translations, 
                          language=language,
                          languages=get_supported_languages(),
-                         cooldown_remaining=cooldown_remaining)
+                         user=user)
 
+# Authentication routes
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     language = session.get('language', 'en')
@@ -92,21 +151,24 @@ def login():
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         
-        if not username or not password:
-            flash(translations['invalid_credentials'], 'error')
-            return redirect(url_for('login'))
-        
-        result = auth_manager.authenticate_user(username, password)
+        result = auth_manager.login_user(username, password)
         
         if result['success']:
-            session['user_id'] = result['username']
-            session['user_email'] = result['email']
-            flash(f"Bem-vindo, {username}!" if language == 'pt' else f"Welcome, {username}!", 'success')
-            return redirect(url_for('index'))
+            session['auth_token'] = result['token']
+            session['current_user'] = result['user']
+            flash(translations.get('success_login', 'Login successful!'), 'success')
+            
+            # Redirect to the page user was trying to access or home
+            next_page = request.args.get('next')
+            return redirect(next_page or url_for('index'))
         else:
-            flash(translations['invalid_credentials'], 'error')
+            error_key = result.get('error', 'error_invalid_credentials')
+            flash(translations.get(error_key, 'Login failed'), 'error')
     
-    return render_template('login.html', translations=translations, language=language)
+    return render_template('login.html', 
+                         translations=translations, 
+                         language=language,
+                         languages=get_supported_languages())
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -119,121 +181,131 @@ def register():
         password = request.form.get('password', '')
         confirm_password = request.form.get('confirm_password', '')
         
-        # Validation
-        if not username or not email or not password:
-            flash("Todos os campos são obrigatórios" if language == 'pt' else "All fields are required", 'error')
-            return redirect(url_for('register'))
-        
+        # Validate passwords match
         if password != confirm_password:
-            flash("As senhas não coincidem" if language == 'pt' else "Passwords don't match", 'error')
-            return redirect(url_for('register'))
-        
-        if len(password) < 6:
-            flash("A senha deve ter pelo menos 6 caracteres" if language == 'pt' else "Password must be at least 6 characters", 'error')
-            return redirect(url_for('register'))
-        
-        result = auth_manager.register_user(username, email, password)
-        
-        if result['success']:
-            flash(translations['registration_successful'], 'success')
-            return redirect(url_for('login'))
+            flash(translations.get('error_passwords_dont_match', 'Passwords do not match'), 'error')
         else:
-            if result['error'] == 'user_already_exists':
-                flash(translations['user_already_exists'], 'error')
+            result = auth_manager.register_user(username, email, password)
+            
+            if result['success']:
+                session['auth_token'] = result['token']
+                session['current_user'] = result['user']
+                flash(translations.get('success_register', 'Account created successfully!'), 'success')
+                return redirect(url_for('index'))
             else:
-                flash("Erro no cadastro" if language == 'pt' else "Registration error", 'error')
+                error_key = result.get('error', 'error_registration_failed')
+                flash(translations.get(error_key, 'Registration failed'), 'error')
     
-    return render_template('register.html', translations=translations, language=language)
+    return render_template('register.html', 
+                         translations=translations, 
+                         language=language,
+                         languages=get_supported_languages())
 
 @app.route('/logout')
 def logout():
-    session.clear()
-    language = session.get('language', 'en')
-    flash("Logout realizado com sucesso" if language == 'pt' else "Logged out successfully", 'success')
-    return redirect(url_for('index'))
-
-@app.route('/history')
-@login_required
-def search_history():
     language = session.get('language', 'en')
     translations = get_translations(language)
     
-    history = auth_manager.get_user_search_history(session['user_id'])
+    token = session.get('auth_token')
+    if token:
+        auth_manager.logout_user(token)
+    
+    session.pop('auth_token', None)
+    session.pop('current_user', None)
+    flash(translations.get('success_logout', 'Logout successful!'), 'success')
+    return redirect(url_for('login'))
+
+@app.route('/history')
+@login_required
+def history():
+    language = session.get('language', 'en')
+    translations = get_translations(language)
+    user = session.get('current_user')
+    
+    # Get user history
+    if not user or 'username' not in user:
+        return redirect(url_for('login'))
+    
+    user_history = history_manager.get_history(user['username'])
+    stats = history_manager.get_history_stats(user['username'])
     
     return render_template('history.html', 
                          translations=translations, 
                          language=language,
-                         history=history)
+                         languages=get_supported_languages(),
+                         user=user,
+                         history=user_history,
+                         stats=stats)
 
 @app.route('/history/delete/<search_id>', methods=['POST'])
 @login_required
-def delete_history_item(search_id):
+def delete_search(search_id):
     language = session.get('language', 'en')
     translations = get_translations(language)
+    user = session.get('current_user')
     
-    success = auth_manager.delete_search_history_item(session['user_id'], search_id)
+    if not user or 'username' not in user:
+        return redirect(url_for('login'))
+    
+    success = history_manager.delete_search(user['username'], search_id)
     
     if success:
-        flash(translations['item_removed'], 'success')
+        flash(translations.get('success_search_deleted', 'Search deleted successfully!'), 'success')
     else:
-        flash(translations['error_removing_item'], 'error')
+        flash(translations.get('error_export_failed', 'Delete failed'), 'error')
     
-    return redirect(url_for('search_history'))
+    return redirect(url_for('history'))
 
 @app.route('/history/clear', methods=['POST'])
 @login_required
 def clear_history():
     language = session.get('language', 'en')
     translations = get_translations(language)
+    user = session.get('current_user')
     
-    success = auth_manager.clear_user_search_history(session['user_id'])
+    if not user or 'username' not in user:
+        return redirect(url_for('login'))
+    
+    success = history_manager.clear_history(user['username'])
     
     if success:
-        flash(translations['history_cleared'], 'success')
+        flash(translations.get('success_history_cleared', 'History cleared successfully!'), 'success')
     else:
-        flash(translations['error_clearing_history'], 'error')
+        flash(translations.get('error_export_failed', 'Clear failed'), 'error')
     
-    return redirect(url_for('search_history'))
+    return redirect(url_for('history'))
 
 @app.route('/history/view/<search_id>')
 @login_required
-def view_history_item(search_id):
+def view_search_results(search_id):
     language = session.get('language', 'en')
     translations = get_translations(language)
+    user = session.get('current_user')
     
-    # Get search details from history
-    search_item = auth_manager.get_search_by_id(session['user_id'], search_id)
+    if not user or 'username' not in user:
+        return redirect(url_for('login'))
     
-    if not search_item:
-        flash(translations['search_not_found'], 'error')
-        return redirect(url_for('search_history'))
+    # Get search data from history
+    search_data = history_manager.get_search(user['username'], search_id)
+    if not search_data:
+        flash(translations.get('error_404', 'Search not found'), 'error')
+        return redirect(url_for('history'))
     
-    # Create a properly structured result for display
-    results = {
-        'usernames': search_item.get('usernames', []),
-        'found_profiles': search_item.get('found_profiles', []),
-        'not_found_profiles': search_item.get('not_found_profiles', []),
-        'search_timestamp': search_item.get('search_timestamp', search_item.get('timestamp')),
-        'total_sites_checked': search_item.get('total_sites_checked', 0)
-    }
+    # Get results data
+    results_data = history_manager.get_search_results(user['username'], search_id)
+    if not results_data:
+        flash(translations.get('error_export_failed', 'Results not found'), 'error')
+        return redirect(url_for('history'))
     
-    # Store in session for viewing with proper structure
-    session_search_id = f"history_{search_id}"
-    search_results[session_search_id] = results
-    
-    # Mark as completed for history view
-    search_progress[session_search_id] = {
-        'status': 'completed',
-        'progress': 100,
-        'message': translations['search_completed'],
-        'completed': True
-    }
-    
-    return render_template('results.html',
-                         search_id=session_search_id,
-                         translations=translations,
+    return render_template('results.html', 
+                         translations=translations, 
                          language=language,
-                         is_history_view=True)
+                         languages=get_supported_languages(),
+                         user=user,
+                         search_data=search_data,
+                         results=results_data,
+                         search_id=search_id,
+                         from_history=True)
 
 @app.route('/set_language/<language>')
 def set_language(language):
@@ -247,308 +319,474 @@ def search():
     try:
         language = session.get('language', 'en')
         translations = get_translations(language)
-        user_id = session['user_id']
-        
-        # Check search cooldown
-        can_search, cooldown_remaining = check_search_cooldown(user_id)
-        if not can_search:
-            flash(f"{translations['search_cooldown']} {cooldown_remaining} {translations['seconds']}", 'error')
-            return redirect(url_for('index'))
         
         # Get form data
         usernames = request.form.get('usernames', '').strip()
         uploaded_file = request.files.get('json_file')
         
-        # Get usernames from various sources
+        # Get usernames from various sources with input validation
         username_list = []
         
-        # From text input - support both newlines and commas
+        # From text input - support multiple formats: lines, commas, spaces
         if usernames:
+            # Split by lines first
             for line in usernames.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Check if line contains commas
                 if ',' in line:
-                    # Split by comma and add each username
-                    username_list.extend([u.strip() for u in line.split(',') if u.strip()])
+                    # Split by comma and clean each username
+                    for username in line.split(','):
+                        username = _sanitize_username(username.strip())
+                        if username and username not in username_list:
+                            username_list.append(username)
+                # Check if line contains spaces (multiple usernames in one line)
+                elif ' ' in line and len(line.split()) > 1:
+                    # Split by spaces and clean each username
+                    for username in line.split():
+                        username = _sanitize_username(username.strip())
+                        if username and username not in username_list:
+                            username_list.append(username)
                 else:
                     # Single username per line
-                    if line.strip():
-                        username_list.append(line.strip())
+                    username = _sanitize_username(line)
+                    if username and username not in username_list:
+                        username_list.append(username)
         
-        # From uploaded JSON file
+        logging.info(f"Parsed {len(username_list)} unique usernames from text input")
+        
+        # From uploaded JSON file with proper validation
         if uploaded_file and uploaded_file.filename and allowed_file(uploaded_file.filename):
+            filepath = None
             try:
                 filename = secure_filename(uploaded_file.filename)
                 filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
                 uploaded_file.save(filepath)
                 
+                # Check if file is empty
+                if os.path.getsize(filepath) == 0:
+                    flash(translations.get('json_empty_file', 'Empty JSON file'), 'error')
+                    os.remove(filepath)
+                    return redirect(url_for('index'))
+                
                 with open(filepath, 'r', encoding='utf-8') as f:
-                    json_data = json.load(f)
+                    file_content = f.read().strip()
+                    
+                    # Check if file has content
+                    if not file_content:
+                        flash(translations.get('json_empty_file', 'Empty JSON file'), 'error')
+                        os.remove(filepath)
+                        return redirect(url_for('index'))
+                    
+                    try:
+                        json_data = json.loads(file_content)
+                    except json.JSONDecodeError as json_error:
+                        error_msg = f"""{translations.get('json_format_error', 'JSON format error')}: {str(json_error)}. 
+                        
+{translations.get('json_accepted_formats', 'Invalid format')}
+
+{translations.get('json_verify_format', 'Verify format')}"""
+                        flash(error_msg, 'error')
+                        os.remove(filepath)
+                        return redirect(url_for('index'))
+                    
                     if isinstance(json_data, list):
-                        username_list.extend(json_data)
+                        # Validate that all items are strings
+                        valid_usernames = [str(username).strip() for username in json_data if str(username).strip()]
+                        username_list.extend(valid_usernames)
+                        logging.info(f"JSON upload: loaded {len(valid_usernames)} usernames from array")
+                        success_msg = translations.get('json_loaded_success', 'JSON loaded successfully: {count} usernames found').format(count=len(valid_usernames))
+                        flash(success_msg, 'success')
                     elif isinstance(json_data, dict) and 'usernames' in json_data:
-                        username_list.extend(json_data['usernames'])
+                        if isinstance(json_data['usernames'], list):
+                            valid_usernames = [str(username).strip() for username in json_data['usernames'] if str(username).strip()]
+                            username_list.extend(valid_usernames)
+                            logging.info(f"JSON upload: loaded {len(valid_usernames)} usernames from object")
+                            success_msg = translations.get('json_loaded_success', 'JSON loaded successfully: {count} usernames found').format(count=len(valid_usernames))
+                            flash(success_msg, 'success')
+                        else:
+                            flash(translations.get('json_usernames_must_be_array', 'usernames field must be array'), 'error')
+                            os.remove(filepath)
+                            return redirect(url_for('index'))
+                    else:
+                        flash(translations.get('json_invalid_format', 'Invalid JSON format'), 'error')
+                        os.remove(filepath)
+                        return redirect(url_for('index'))
                 
                 os.remove(filepath)  # Clean up uploaded file
             except Exception as e:
-                flash(f"Error processing JSON file: {str(e)}", 'error')
+                error_msg = f"{translations.get('json_processing_error', 'Error processing JSON file')}: {str(e)}"
+                flash(error_msg, 'error')
+                if filepath:
+                    try:
+                        if os.path.exists(filepath):
+                            os.remove(filepath)
+                    except:
+                        pass  # Ignore cleanup errors
                 return redirect(url_for('index'))
+        elif uploaded_file and uploaded_file.filename and not allowed_file(uploaded_file.filename):
+            flash("Invalid file type. Please upload a JSON file.", 'error')
+            return redirect(url_for('index'))
         
         if not username_list:
             flash(translations['error_no_usernames'], 'error')
             return redirect(url_for('index'))
         
-        # Set search cooldown
-        set_search_cooldown(user_id)
+        # Get options with proper checkbox validation
+        timeout_val = request.form.get('timeout', '').strip()
+        if not timeout_val:
+            timeout_val = '300'  # Default 5 minutes, no upper limit
         
-        # Get options
+        # Properly validate checkboxes - only True if explicitly checked
+        print_all_checked = request.form.get('print_all') == 'on'
+        print_found_checked = request.form.get('print_found') == 'on'
+        nsfw_checked = request.form.get('nsfw') == 'on'
+        local_checked = request.form.get('local') == 'on'
+            
         options = {
-            'print_all': 'print_all' in request.form,
-            'print_found': 'print_found' in request.form,
-            'nsfw': 'nsfw' in request.form,
-            'local': 'local' in request.form,
-            'timeout': request.form.get('timeout', '').strip(),
+            'print_all': print_all_checked,
+            'print_found': print_found_checked,
+            'nsfw': nsfw_checked,
+            'local': local_checked,
+            'timeout': timeout_val,
         }
         
-        # Generate search ID
-        search_id = f"search_{int(time.time())}"
+        logging.info(f"Checkbox validation - print_all: {print_all_checked}, print_found: {print_found_checked}, nsfw: {nsfw_checked}, local: {local_checked}")
         
-        # Initialize progress tracking with proper progress system
-        search_progress[search_id] = {
-            'status': 'starting',
-            'progress': 0,
-            'message': translations['search_starting'],
-            'completed': False,
-            'current_site': '',
-            'total_sites': 0,
-            'sites_checked': 0
+        logging.info(f"Search options: {options}")
+        
+        # Get current user
+        user = session.get('current_user')
+        if not user or 'username' not in user:
+            return redirect(url_for('login'))
+        
+        username_owner = user['username']
+        
+        # Check if user already has an active search
+        if username_owner in active_searches:
+            active_search_id = active_searches[username_owner]
+            flash(translations.get('search_in_progress', 'You already have a search in progress'), 'warning')
+            return redirect(url_for('get_results', search_id=active_search_id))
+        
+        # Generate UNIQUE search ID
+        import time as time_module
+        import random
+        search_id = f"search_{int(time_module.time())}_{random.randint(1000,9999)}"
+        
+        # Mark user as having an active search
+        active_searches[username_owner] = search_id
+        
+        # Create search data ONCE
+        search_data = {
+            'search_id': search_id,
+            'usernames': username_list,
+            'options': options,
+            'status': 'running',
+            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         
-        # For testing, create progressive mock results
-        if username_list[0].lower() in ['test', 'demo', 'example']:
-            logging.info(f"Creating test results with progressive updates for search_id: {search_id}")
-            
-            # Start background thread for progressive test updates
-            def simulate_test_progress():
-                import time
-                
-                # Simulate progressive search
-                progress_steps = [
-                    (10, 'Iniciando verificação...', 'GitHub'),
-                    (25, 'Verificando redes sociais principais...', 'Twitter'),
-                    (50, 'Expandindo busca...', 'LinkedIn'),
-                    (75, 'Finalizando verificações...', 'Instagram'),
-                    (90, 'Processando resultados...', ''),
-                    (100, translations['search_completed'], '')
-                ]
-                
-                for progress, message, current_site in progress_steps:
-                    search_progress[search_id].update({
-                        'progress': progress,
-                        'message': message,
-                        'current_site': current_site,
-                        'sites_checked': int(progress / 25) if progress < 100 else 3
-                    })
-                    time.sleep(1)  # 1 second delay between updates
-                
-                # Create final test results
-                test_results = {
-                    'usernames': username_list,
-                    'found_profiles': [
-                        {
-                            'username': username_list[0],
-                            'site': 'GitHub',
-                            'url': f'https://github.com/{username_list[0]}',
-                            'status': 'found',
-                            'response_time': 150
-                        },
-                        {
-                            'username': username_list[0],
-                            'site': 'Twitter',
-                            'url': f'https://twitter.com/{username_list[0]}',
-                            'status': 'found',
-                            'response_time': 200
-                        }
-                    ],
-                    'not_found_profiles': [
-                        {
-                            'username': username_list[0],
-                            'site': 'LinkedIn',
-                            'url': '',
-                            'status': 'not_found',
-                            'response_time': 100
-                        }
-                    ],
-                    'search_timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'total_sites_checked': 3,
-                    'options_used': options
-                }
-                
-                search_results[search_id] = test_results
-                search_progress[search_id].update({
-                    'status': 'completed',
-                    'progress': 100,
-                    'message': translations['search_completed'],
-                    'completed': True,
-                    'total_sites': 3,
-                    'sites_checked': 3
-                })
-                
-                # Save to user history
-                auth_manager.save_user_search_history(user_id, {
-                    'search_id': search_id,
-                    'usernames': username_list,
-                    'search_timestamp': test_results['search_timestamp'],
-                    'total_sites_checked': test_results['total_sites_checked'],
-                    'found_profiles': test_results['found_profiles'],
-                    'not_found_profiles': test_results['not_found_profiles']
-                })
-            
-            # Start simulation thread
-            thread = threading.Thread(target=simulate_test_progress)
-            thread.daemon = True
-            thread.start()
-        else:
-            # Start real search in background thread
-            def run_search():
-                try:
-                    runner = SherlockRunner()
-                    results = runner.run_search(username_list, options, search_id, search_progress, translations)
-                    search_results[search_id] = results
-                    search_progress[search_id]['status'] = 'completed'
-                    search_progress[search_id]['progress'] = 100
-                    search_progress[search_id]['message'] = translations['search_completed']
-                    search_progress[search_id]['completed'] = True
-                    
-                    # Save to user history
-                    auth_manager.save_user_search_history(user_id, {
-                        'search_id': search_id,
-                        'usernames': username_list,
-                        'search_timestamp': results.get('search_timestamp'),
-                        'total_sites_checked': results.get('total_sites_checked', 0),
-                        'found_profiles': results.get('found_profiles', []),
-                        'not_found_profiles': results.get('not_found_profiles', [])
-                    })
-                    
-                except Exception as e:
-                    logging.error(f"Search error: {str(e)}")
-                    search_progress[search_id]['status'] = 'error'
-                    search_progress[search_id]['message'] = f"Error: {str(e)}"
-                    search_progress[search_id]['completed'] = True
-            
-            thread = threading.Thread(target=run_search)
-            thread.daemon = True
-            thread.start()
+        # Add to history manager ONCE - no duplicates allowed
+        history_manager.add_search(username_owner, search_data)
+        logging.info(f"Created SINGLE search entry {search_id} for user {username_owner}")
         
-        return render_template('results.html', 
-                             search_id=search_id,
-                             translations=translations,
-                             language=language)
+        # Start search in background thread and redirect to loading page immediately
+        def run_search_background():
+            try:
+                logging.info(f"Background search: Starting for {len(username_list)} usernames")
+                
+                runner = SherlockRunner()
+                results = runner.run_search(
+                    username_list, 
+                    options, 
+                    search_id, 
+                    history_manager,
+                    username_owner
+                )
+                
+                # Save results to JSON file
+                results_file = os.path.join('results', f'{search_id}_results.json')
+                os.makedirs('results', exist_ok=True)
+                
+                with open(results_file, 'w', encoding='utf-8') as f:
+                    json.dump(results, f, ensure_ascii=False, indent=2)
+                
+                logging.info(f"Search {search_id} completed and saved to {results_file}")
+                
+                # Update search status in history
+                history_manager.update_search_status(
+                    username_owner, 
+                    search_id, 
+                    'completed',
+                    len(results.get('found_profiles', [])) + len(results.get('not_found_profiles', [])),
+                    len(results.get('found_profiles', [])),
+                    results_file,
+                    []
+                )
+                
+            except Exception as e:
+                logging.error(f"Search {search_id} failed: {str(e)}")
+                # Update status to failed
+                history_manager.update_search_status(
+                    username_owner, 
+                    search_id, 
+                    'failed', 
+                    0, 
+                    0,
+                    None,
+                    []
+                )
+            finally:
+                # Clear active search when done
+                if username_owner in active_searches:
+                    del active_searches[username_owner]
+                    logging.info(f"Cleared active search for user {username_owner}")
         
+        # Start background thread
+        import threading
+        thread = threading.Thread(target=run_search_background, daemon=True)
+        thread.start()
+        
+        # Redirect to results page immediately (loading state)
+        return redirect(url_for('get_results', search_id=search_id))
+            
     except Exception as e:
         logging.error(f"Search route error: {str(e)}")
         flash(f"Error: {str(e)}", 'error')
         return redirect(url_for('index'))
 
-@app.route('/progress/<search_id>')
-def get_progress(search_id):
-    if search_id in search_progress:
-        return jsonify(search_progress[search_id])
-    return jsonify({'status': 'not_found', 'message': 'Search not found'}), 404
-
 @app.route('/results/<search_id>')
+@login_required
 def get_results(search_id):
-    if search_id in search_results:
-        return jsonify(search_results[search_id])
-    return jsonify({'error': 'Results not found'}), 404
+    language = session.get('language', 'en')
+    translations = get_translations(language)
+    user = session.get('current_user')
+    
+    if not user or 'username' not in user:
+        return redirect(url_for('login'))
+    
+    # Get search data from history
+    search_data = history_manager.get_search(user['username'], search_id)
+    if not search_data:
+        flash(translations.get('error_404', 'Search not found'), 'error')
+        return redirect(url_for('history'))
+    
+    # Try to read results from JSON file
+    results_file = os.path.join('results', f'{search_id}_results.json')
+    results_data = None
+    
+    if os.path.exists(results_file):
+        try:
+            with open(results_file, 'r', encoding='utf-8') as f:
+                results_data = json.load(f)
+            logging.info(f"Loaded results from {results_file}")
+        except Exception as e:
+            logging.error(f"Error reading results file {results_file}: {str(e)}")
+    
+    # If no results file exists and search is completed, show error
+    if not results_data and search_data.get('status') == 'completed':
+        flash(translations.get('error_export_failed', 'Results not found'), 'error')
+        return redirect(url_for('history'))
+    
+    # If search is failed, show error
+    if search_data.get('status') == 'failed':
+        flash(translations.get('search_error', 'Search failed'), 'error')
+        return redirect(url_for('history'))
+    
+    # If search is still running, show loading page with auto-refresh
+    if search_data.get('status') == 'running' and not results_data:
+        return render_template('results.html', 
+                             search_id=search_id,
+                             results=None,
+                             translations=translations,
+                             language=language,
+                             user=user,
+                             search_data=search_data,
+                             loading=True)
+    
+    return render_template('results.html', 
+                         search_id=search_id,
+                         results=results_data,
+                         translations=translations,
+                         language=language,
+                         user=user,
+                         search_data=search_data)
 
 @app.route('/download/<search_id>/json')
+@login_required
 def download_json(search_id):
+    """Download search results as JSON"""
     try:
+        user = session.get('current_user')
+        if not user or 'username' not in user:
+            flash('Unauthorized', 'error')
+            return redirect(url_for('login'))
+        
+        # Get results data
         if search_id not in search_results:
-            return "Resultados não encontrados", 404
+            results_data = history_manager.get_search_results(user['username'], search_id)
+            if not results_data:
+                flash('Results not found', 'error')
+                return redirect(url_for('history'))
+        else:
+            results_data = search_results[search_id]
         
-        results = search_results[search_id]
-        language = session.get('language', 'en')
+        # Create temporary file
+        import tempfile
+        import json
         
-        export_utils = ExportUtils(language)
-        filename = export_utils.export_json(results, search_id)
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(results_data, f, indent=2, ensure_ascii=False)
+            temp_path = f.name
         
-        return send_file(filename, as_attachment=True, download_name=f'sherlock_results_{search_id}.json')
+        return send_file(temp_path, 
+                        as_attachment=True, 
+                        download_name=f'sherlock_results_{search_id}.json',
+                        mimetype='application/json')
         
     except Exception as e:
         logging.error(f"JSON download error: {str(e)}")
-        return f"Erro ao fazer download: {str(e)}", 500
+        flash('Download failed', 'error')
+        return redirect(url_for('history'))
 
-@app.route('/download/<search_id>/csv')
-def download_csv(search_id):
+# Additional export routes
+@app.route('/export/<search_id>/csv')
+@login_required
+def export_csv(search_id):
     try:
+        user = session.get('current_user')
+        if not user or 'username' not in user:
+            return redirect(url_for('login'))
+        
+        # Get results data
         if search_id not in search_results:
-            return "Resultados não encontrados", 404
+            results_data = history_manager.get_search_results(user['username'], search_id)
+            if not results_data:
+                flash('Results not found', 'error')
+                return redirect(url_for('history'))
+        else:
+            results_data = search_results[search_id]
         
-        results = search_results[search_id]
         language = session.get('language', 'en')
-        
         export_utils = ExportUtils(language)
-        filename = export_utils.export_csv(results, search_id)
-        
-        return send_file(filename, as_attachment=True, download_name=f'sherlock_results_{search_id}.csv')
+        return export_utils.export_csv(results_data, search_id)
         
     except Exception as e:
-        logging.error(f"CSV download error: {str(e)}")
-        return f"Erro ao fazer download: {str(e)}", 500
+        logging.error(f"CSV export error: {str(e)}")
+        flash('Export failed', 'error')
+        return redirect(url_for('history'))
 
-@app.route('/download/<search_id>/pdf')
-def download_pdf(search_id):
+@app.route('/export/<search_id>/pdf')
+@login_required
+def export_pdf(search_id):
     try:
+        user = session.get('current_user')
+        if not user or 'username' not in user:
+            return redirect(url_for('login'))
+        
+        # Get results data
         if search_id not in search_results:
-            return "Resultados não encontrados", 404
+            results_data = history_manager.get_search_results(user['username'], search_id)
+            if not results_data:
+                flash('Results not found', 'error')
+                return redirect(url_for('history'))
+        else:
+            results_data = search_results[search_id]
         
-        results = search_results[search_id]
         language = session.get('language', 'en')
-        
         export_utils = ExportUtils(language)
-        filename = export_utils.export_pdf(results, search_id)
-        
-        return send_file(filename, as_attachment=True, download_name=f'sherlock_results_{search_id}.pdf')
+        return export_utils.export_pdf(results_data, search_id)
         
     except Exception as e:
-        logging.error(f"PDF download error: {str(e)}")
-        return f"Erro ao fazer download: {str(e)}", 500
+        logging.error(f"PDF export error: {str(e)}")
+        flash('Export failed', 'error')
+        return redirect(url_for('history'))
 
-@app.route('/download/<search_id>/txt')
-def download_txt(search_id):
+@app.route('/export/<search_id>/txt')
+@login_required
+def export_txt(search_id):
     try:
+        user = session.get('current_user')
+        if not user or 'username' not in user:
+            return redirect(url_for('login'))
+        
+        # Get results data
         if search_id not in search_results:
-            return "Resultados não encontrados", 404
+            results_data = history_manager.get_search_results(user['username'], search_id)
+            if not results_data:
+                flash('Results not found', 'error')
+                return redirect(url_for('history'))
+        else:
+            results_data = search_results[search_id]
         
-        results = search_results[search_id]
         language = session.get('language', 'en')
-        
         export_utils = ExportUtils(language)
-        filename = export_utils.export_txt(results, search_id)
-        
-        return send_file(filename, as_attachment=True, download_name=f'sherlock_results_{search_id}.txt')
+        return export_utils.export_txt(results_data, search_id)
         
     except Exception as e:
-        logging.error(f"TXT download error: {str(e)}")
-        return f"Erro ao fazer download: {str(e)}", 500
+        logging.error(f"TXT export error: {str(e)}")
+        flash('Export failed', 'error')
+        return redirect(url_for('history'))
 
-@app.route('/download/<search_id>/zip')
-def download_zip(search_id):
+@app.route('/export/<search_id>/zip')
+@login_required
+def export_zip(search_id):
     try:
+        user = session.get('current_user')
+        if not user or 'username' not in user:
+            return redirect(url_for('login'))
+        
+        # Get results data
         if search_id not in search_results:
-            return "Resultados não encontrados", 404
+            results_data = history_manager.get_search_results(user['username'], search_id)
+            if not results_data:
+                flash('Results not found', 'error')
+                return redirect(url_for('history'))
+        else:
+            results_data = search_results[search_id]
         
-        results = search_results[search_id]
         language = session.get('language', 'en')
-        
         export_utils = ExportUtils(language)
-        filename = export_utils.export_zip_simple(results, search_id)
-        
-        return send_file(filename, as_attachment=True, download_name=f'sherlock_results_{search_id}.zip')
+        return export_utils.export_zip_simple(results_data, search_id)
         
     except Exception as e:
-        logging.error(f"ZIP download error: {str(e)}")
-        return f"Erro ao fazer download: {str(e)}", 500
+        logging.error(f"ZIP export error: {str(e)}")
+        flash('Export failed', 'error')
+        return redirect(url_for('history'))
+
+# Simple API for checking search completion
+@app.route('/api/search/status/<search_id>')
+@login_required
+def api_search_status(search_id):
+    """Check if search results are available"""
+    try:
+        user = session.get('current_user')
+        if not user or 'username' not in user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        # Check if results are in memory
+        if search_id in search_results:
+            return jsonify({
+                'status': 'completed',
+                'found_count': len(search_results[search_id].get('found_profiles', [])),
+                'total_count': search_results[search_id].get('total_sites_checked', 0)
+            })
+        
+        # Check in history
+        search_data = history_manager.get_search(user['username'], search_id)
+        if search_data and search_data.get('status') == 'completed':
+            return jsonify({
+                'status': 'completed',
+                'found_count': search_data.get('found_count', 0),
+                'total_count': search_data.get('total_count', 0)
+            })
+        
+        return jsonify({'status': 'running'})
+        
+    except Exception as e:
+        logging.error(f"API status error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 @app.errorhandler(404)
 def not_found_error(error):

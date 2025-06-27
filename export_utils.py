@@ -18,7 +18,7 @@ except ImportError:
 from translations import get_translations
 
 class ExportUtils:
-    def __init__(self, language='pt'):
+    def __init__(self, language='en'):
         self.language = language
         self.translations = get_translations(language)
         self.results_folder = 'results'
@@ -26,80 +26,79 @@ class ExportUtils:
     
     def export_csv(self, results, search_id):
         """Export results to CSV format"""
-        filename = os.path.join(self.results_folder, f"sherlock_results_{search_id}.csv")
+        from flask import Response
+        from io import StringIO
         
-        with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-            fieldnames = ['username', 'site', 'url', 'status', 'response_time']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            
-            # Write header
-            header_row = {
-                'username': self.translations['username'],
-                'site': self.translations['social_network'],
-                'url': self.translations['profile_url'],
-                'status': self.translations['status'],
-                'response_time': self.translations['response_time']
+        # Create CSV content in memory
+        output = StringIO()
+        fieldnames = ['username', 'site', 'url', 'status', 'response_time']
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        
+        # Write header
+        header_row = {
+            'username': self.translations['username'],
+            'site': self.translations['social_network'],
+            'url': self.translations['profile_url'],
+            'status': self.translations['status'],
+            'response_time': self.translations['response_time']
+        }
+        writer.writerow(header_row)
+        
+        # Write found profiles
+        for profile in results.get('found_profiles', []):
+            writer.writerow({
+                'username': profile['username'],
+                'site': profile['site'],
+                'url': profile['url'],
+                'status': self.translations['found'],
+                'response_time': profile.get('response_time', 0)
+            })
+        
+        # Write not found profiles
+        for profile in results.get('not_found_profiles', []):
+            writer.writerow({
+                'username': profile['username'],
+                'site': profile['site'],
+                'url': profile['url'],
+                'status': self.translations['not_found'],
+                'response_time': profile.get('response_time', 0)
+            })
+        
+        csv_content = output.getvalue()
+        output.close()
+        
+        # Create response with proper headers
+        response = Response(
+            csv_content,
+            mimetype='text/csv',
+            headers={
+                'Content-Disposition': f'attachment; filename=sherlock_results_{search_id}.csv',
+                'Content-Type': 'text/csv; charset=utf-8'
             }
-            writer.writerow(header_row)
-            
-            # Write found profiles
-            for profile in results.get('found_profiles', []):
-                writer.writerow({
-                    'username': profile['username'],
-                    'site': profile['site'],
-                    'url': profile['url'],
-                    'status': self.translations['found'],
-                    'response_time': profile.get('response_time', 0)
-                })
-            
-            # Write not found profiles
-            for profile in results.get('not_found_profiles', []):
-                writer.writerow({
-                    'username': profile['username'],
-                    'site': profile['site'],
-                    'url': profile['url'],
-                    'status': self.translations['not_found'],
-                    'response_time': profile.get('response_time', 0)
-                })
+        )
         
-        return filename
-    
-    def export_json(self, results, search_id):
-        """Export results to JSON format"""
-        filename = os.path.join(self.results_folder, f"sherlock_results_{search_id}.json")
-        
-        # Translate status fields
-        translated_results = results.copy()
-        
-        for profile in translated_results.get('found_profiles', []):
-            if profile['status'] == 'found':
-                profile['status'] = self.translations['found']
-        
-        for profile in translated_results.get('not_found_profiles', []):
-            if profile['status'] == 'not_found':
-                profile['status'] = self.translations['not_found']
-        
-        with open(filename, 'w', encoding='utf-8') as jsonfile:
-            json.dump(translated_results, jsonfile, indent=2, ensure_ascii=False)
-        
-        return filename
+        return response
     
     def export_pdf(self, results, search_id):
         """Export results to PDF format"""
-        filename = os.path.join(self.results_folder, f"sherlock_results_{search_id}.pdf")
+        from flask import Response
+        from io import BytesIO
         
         if REPORTLAB_AVAILABLE:
-            return self._export_pdf_reportlab(results, filename)
+            return self._export_pdf_reportlab(results, search_id)
         else:
-            return self._export_pdf_simple(results, filename)
+            return self._export_pdf_simple(results, search_id)
     
-    def _export_pdf_reportlab(self, results, filename):
+    def _export_pdf_reportlab(self, results, search_id):
         """Export PDF using ReportLab"""
+        from flask import Response
+        from io import BytesIO
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+        
         try:
-            from reportlab.pdfgen import canvas
-            from reportlab.lib.pagesizes import A4
-            
-            c = canvas.Canvas(filename, pagesize=A4)
+            buffer = BytesIO()
+            c = canvas.Canvas(buffer, pagesize=A4)
             width, height = A4
             
             # Title
@@ -143,33 +142,62 @@ class ExportUtils:
                     y_position -= 25
             
             c.save()
-            return filename
+            
+            pdf_content = buffer.getvalue()
+            buffer.close()
+            
+            # Create response
+            response = Response(
+                pdf_content,
+                mimetype='application/pdf',
+                headers={
+                    'Content-Disposition': f'attachment; filename=sherlock_results_{search_id}.pdf',
+                    'Content-Type': 'application/pdf'
+                }
+            )
+            
+            return response
             
         except Exception as e:
             logging.error(f"Error creating PDF with ReportLab: {str(e)}")
-            return self._export_pdf_simple(results, filename)
+            return self._export_pdf_simple(results, search_id)
     
-    def _export_pdf_simple(self, results, filename):
+    def _export_pdf_simple(self, results, search_id):
         """Simple PDF export (fallback)"""
-        # Create a simple text file as PDF fallback
+        from flask import Response
+        
+        # Create a simple text content as PDF fallback
         txt_content = self._generate_text_content(results)
         
-        # Save as text file with .pdf extension for simplicity
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write(txt_content)
+        # Create response with PDF headers (text content as fallback)
+        response = Response(
+            txt_content,
+            mimetype='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename=sherlock_results_{search_id}.pdf',
+                'Content-Type': 'application/pdf'
+            }
+        )
         
-        return filename
+        return response
     
     def export_txt(self, results, search_id):
         """Export results to TXT format"""
-        filename = os.path.join(self.results_folder, f"sherlock_results_{search_id}.txt")
+        from flask import Response
         
         content = self._generate_text_content(results)
         
-        with open(filename, 'w', encoding='utf-8') as txtfile:
-            txtfile.write(content)
+        # Create response with proper headers
+        response = Response(
+            content,
+            mimetype='text/plain',
+            headers={
+                'Content-Disposition': f'attachment; filename=sherlock_results_{search_id}.txt',
+                'Content-Type': 'text/plain; charset=utf-8'
+            }
+        )
         
-        return filename
+        return response
     
     def _generate_text_content(self, results):
         """Generate text content for TXT and simple PDF export"""
@@ -215,39 +243,116 @@ class ExportUtils:
         return '\n'.join(content)
     
     def export_zip_simple(self, results, search_id):
-        """Export all formats in a ZIP file"""
-        zip_filename = os.path.join(self.results_folder, f"sherlock_results_{search_id}.zip")
+        """Export CSV and JSON formats in a ZIP file with security enhancements"""
+        from flask import Response
+        from io import BytesIO, StringIO
+        import json
+        import re
         
         try:
-            # Generate all export files
-            csv_file = self.export_csv(results, search_id)
-            json_file = self.export_json(results, search_id)
-            txt_file = self.export_txt(results, search_id)
-            pdf_file = self.export_pdf(results, search_id)
+            # Sanitize search_id to prevent path traversal
+            safe_search_id = re.sub(r'[^\w\-_]', '', str(search_id))
+            if not safe_search_id:
+                safe_search_id = 'results'
             
-            # Create ZIP file with all formats
-            with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                files_to_zip = [
-                    (csv_file, f"sherlock_results_{search_id}.csv"),
-                    (json_file, f"sherlock_results_{search_id}.json"),
-                    (txt_file, f"sherlock_results_{search_id}.txt"),
-                    (pdf_file, f"sherlock_results_{search_id}.pdf")
-                ]
+            # Create ZIP content in memory
+            zip_buffer = BytesIO()
+            
+            # Define secure file list - only known, controlled filenames
+            files_to_zip = []
+            
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # Generate CSV content
+                csv_output = StringIO()
+                fieldnames = ['username', 'site', 'url', 'status', 'response_time']
+                writer = csv.DictWriter(csv_output, fieldnames=fieldnames)
                 
-                for file_path, archive_name in files_to_zip:
-                    if os.path.exists(file_path):
-                        zipf.write(file_path, archive_name)
+                # Write CSV header
+                header_row = {
+                    'username': self.translations['username'],
+                    'site': self.translations['social_network'],
+                    'url': self.translations['profile_url'],
+                    'status': self.translations['status'],
+                    'response_time': self.translations['response_time']
+                }
+                writer.writerow(header_row)
+                
+                # Write CSV data with input validation
+                for profile in results.get('found_profiles', []):
+                    # Sanitize profile data
+                    safe_profile = {
+                        'username': str(profile.get('username', ''))[:100],
+                        'site': str(profile.get('site', ''))[:100],
+                        'url': str(profile.get('url', ''))[:500],
+                        'status': self.translations['found'],
+                        'response_time': profile.get('response_time', 0)
+                    }
+                    writer.writerow(safe_profile)
+                
+                for profile in results.get('not_found_profiles', []):
+                    # Sanitize profile data
+                    safe_profile = {
+                        'username': str(profile.get('username', ''))[:100],
+                        'site': str(profile.get('site', ''))[:100],
+                        'url': str(profile.get('url', ''))[:500],
+                        'status': self.translations['not_found'],
+                        'response_time': profile.get('response_time', 0)
+                    }
+                    writer.writerow(safe_profile)
+                
+                # Secure filename for CSV
+                csv_filename = f'sherlock_results_{safe_search_id}.csv'
+                zipf.writestr(csv_filename, csv_output.getvalue())
+                files_to_zip.append(csv_filename)
+                csv_output.close()
+                
+                # Generate JSON content with data sanitization
+                translated_results = results.copy()
+                
+                # Sanitize JSON data
+                if 'found_profiles' in translated_results:
+                    for profile in translated_results['found_profiles']:
+                        profile['username'] = str(profile.get('username', ''))[:100]
+                        profile['site'] = str(profile.get('site', ''))[:100]
+                        profile['url'] = str(profile.get('url', ''))[:500]
+                        if profile.get('status') == 'found':
+                            profile['status'] = self.translations['found']
+                
+                if 'not_found_profiles' in translated_results:
+                    for profile in translated_results['not_found_profiles']:
+                        profile['username'] = str(profile.get('username', ''))[:100]
+                        profile['site'] = str(profile.get('site', ''))[:100]
+                        profile['url'] = str(profile.get('url', ''))[:500]
+                        if profile.get('status') == 'not_found':
+                            profile['status'] = self.translations['not_found']
+                
+                json_content = json.dumps(translated_results, indent=2, ensure_ascii=False)
+                
+                # Secure filename for JSON
+                json_filename = f'sherlock_results_{safe_search_id}.json'
+                zipf.writestr(json_filename, json_content)
+                files_to_zip.append(json_filename)
             
-            # Clean up individual files
-            for file_path, _ in files_to_zip:
-                try:
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                except OSError:
-                    pass
+            zip_content = zip_buffer.getvalue()
+            zip_buffer.close()
             
-            return zip_filename
+            # Secure response headers
+            safe_filename = f'sherlock_results_{safe_search_id}.zip'
+            response = Response(
+                zip_content,
+                mimetype='application/zip',
+                headers={
+                    'Content-Disposition': f'attachment; filename="{safe_filename}"',
+                    'Content-Type': 'application/zip',
+                    'Content-Security-Policy': "default-src 'none'",
+                    'X-Content-Type-Options': 'nosniff',
+                    'Cache-Control': 'no-cache, no-store, must-revalidate'
+                }
+            )
+            
+            logging.info(f"Secure ZIP export created: {len(files_to_zip)} files")
+            return response
             
         except Exception as e:
-            logging.error(f"Error creating ZIP file: {str(e)}")
+            logging.exception("Secure ZIP export failed")
             raise e
