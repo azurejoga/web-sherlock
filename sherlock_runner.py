@@ -1,347 +1,367 @@
-import os
+import subprocess
 import json
-import base64
-import bcrypt
-import uuid
-import logging
-import threading
-import zipfile
+import os
 import re
-import pyotp
-import jwt
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.backends import default_backend
+import logging
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import multiprocessing
 
-# Basic config, sensitive data from .env
-JWT_SECRET = os.getenv('JWT_SECRET', 'your_jwt_secret_here')
-JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'HS256')
-JWT_ISSUER = os.getenv('JWT_ISSUER', 'secureapp')
-AES_KEY_RAW = base64.b64decode(os.getenv('AES_KEY_BASE64', base64.b64encode(os.urandom(32)).decode()))
-PBKDF2_SALT = os.getenv('PBKDF2_SALT', 'fixed_salt_for_demo').encode()
-PBKDF2_ITERATIONS = 100_000
-
-USERNAME_REGEX = re.compile(r'^[a-zA-Z0-9_-]{3,30}$')
-
-MAX_ATTEMPTS = 5
-BLOCK_WINDOW = timedelta(minutes=5)
-
-FAILED_LOGINS = {}
-REVOKED_JTI = set()
-LOCK = threading.Lock()
-
-
-def derive_key(key_raw: bytes, salt: bytes = PBKDF2_SALT) -> bytes:
-    """Derive AES key with PBKDF2"""
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=salt,
-        iterations=PBKDF2_ITERATIONS,
-        backend=default_backend()
-    )
-    return kdf.derive(key_raw)
-
-
-class SecureStorage:
-    """AES-GCM encryption with derived key"""
-    def __init__(self, key_raw: bytes):
-        self.key = derive_key(key_raw)
-
-    def encrypt(self, data: bytes) -> bytes:
-        aesgcm = AESGCM(self.key)
-        nonce = os.urandom(12)
-        ct = aesgcm.encrypt(nonce, data, None)
-        return base64.b64encode(nonce + ct)
-
-    def decrypt(self, enc_data: bytes) -> bytes:
-        raw = base64.b64decode(enc_data)
-        nonce = raw[:12]
-        ct = raw[12:]
-        aesgcm = AESGCM(self.key)
-        return aesgcm.decrypt(nonce, ct, None)
-
-
-class AuthManager:
+class SherlockRunner:
     def __init__(self):
-        self.storage = SecureStorage(AES_KEY_RAW)
-        self.users_file = 'users.aes'
-        self.history_dir = 'history'
-        os.makedirs(self.history_dir, exist_ok=True)
-        if not os.path.exists(self.users_file):
-            self.save_users({})
-
-    def _load_users(self) -> Dict[str, Any]:
+        self.sherlock_path = self._find_sherlock()
+        self.working_dir = self._get_working_dir()
+        
+    def _find_sherlock(self):
+        """Find Sherlock installation"""
+        # Check integrated sherlock
+        integrated_path = './sherlock/sherlock_project/__main__.py'
+        if os.path.exists(integrated_path):
+            return 'sherlock_project'
+            
+        return 'sherlock_project'  # Default fallback
+    
+    def _get_working_dir(self):
+        """Get working directory for Sherlock"""
+        if os.path.exists('./sherlock/sherlock_project/__main__.py'):
+            return './sherlock'
+        return './sherlock'
+    
+    def run_search(self, usernames: List[str], options: Dict[str, Any], 
+                  search_id: str, history_manager=None, username_owner: Optional[str] = None) -> Dict:
+        """Run UNIFIED Sherlock search - single search for ALL usernames"""
         try:
-            with open(self.users_file, 'rb') as f:
-                decrypted = self.storage.decrypt(f.read())
-                return json.loads(decrypted)
-        except Exception:
-            logging.exception("Failed to load users")
-            return {}
-
-    def save_users(self, users: Dict[str, Any]) -> None:
-        try:
-            raw = json.dumps(users, indent=2).encode()
-            encrypted = self.storage.encrypt(raw)
-            with open(self.users_file, 'wb') as f:
-                f.write(encrypted)
-        except Exception:
-            logging.exception("Failed to save users")
-
-    def hash_password(self, password: str) -> str:
-        return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
-
-    def verify_password(self, password: str, hashed: str) -> bool:
-        try:
-            return bcrypt.checkpw(password.encode(), hashed.encode())
-        except Exception:
-            return False
-
-    def _rate_limit_check(self, username: str) -> bool:
-        now = datetime.utcnow()
-        attempts = FAILED_LOGINS.get(username, [])
-        attempts = [ts for ts in attempts if now - ts < BLOCK_WINDOW]
-        FAILED_LOGINS[username] = attempts
-        return len(attempts) >= MAX_ATTEMPTS
-
-    def _record_failed_login(self, username: str) -> None:
-        now = datetime.utcnow()
-        attempts = FAILED_LOGINS.get(username, [])
-        attempts.append(now)
-        FAILED_LOGINS[username] = attempts
-
-    def generate_token(self, username: str) -> str:
-        jti = str(uuid.uuid4())
-        payload = {
-            'username': username,
-            'iss': JWT_ISSUER,
-            'jti': jti,
-            'exp': datetime.utcnow() + timedelta(hours=1)
-        }
-        return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-
-    def revoke_token(self, token: str) -> None:
-        try:
-            decoded = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": False})
-            jti = decoded.get('jti')
-            if jti:
-                with LOCK:
-                    REVOKED_JTI.add(jti)
-        except Exception:
-            logging.exception("Token revocation failed")
-
-    def verify_token(self, token: str) -> Optional[str]:
-        try:
-            decoded = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], issuer=JWT_ISSUER)
-            jti = decoded.get('jti')
-            with LOCK:
-                if jti and jti in REVOKED_JTI:
-                    return None
-            return decoded.get('username')
-        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, jwt.InvalidIssuerError):
-            return None
-
-    def register_user(self, username: str, email: str, password: str) -> Dict[str, Any]:
-        if not USERNAME_REGEX.match(username):
-            return {'success': False, 'error': 'invalid_username_format'}
-
-        users = self._load_users()
-        if username in users:
-            return {'success': False, 'error': 'user_exists'}
-        if any(u.get('email') == email for u in users.values()):
-            return {'success': False, 'error': 'email_exists'}
-
-        secret_2fa = pyotp.random_base32()
-        users[username] = {
-            'email': email,
-            'password_hash': self.hash_password(password),
-            '2fa_secret': secret_2fa,
-            'created_at': datetime.utcnow().isoformat(),
-            'last_login': None
-        }
-        self.save_users(users)
-        return {'success': True, 'username': username, '2fa_secret': secret_2fa}
-
-    def verify_2fa(self, username: str, otp_code: str) -> bool:
-        users = self._load_users()
-        user = users.get(username)
-        if not user:
-            return False
-        secret = user.get('2fa_secret')
-        if not secret:
-            return False
-        totp = pyotp.TOTP(secret)
-        return totp.verify(otp_code)
-
-    def authenticate_user(self, username: str, password: str, otp_code: str) -> Dict[str, Any]:
-        if self._rate_limit_check(username):
-            return {'success': False, 'error': 'too_many_attempts'}
-
-        users = self._load_users()
-        user = users.get(username)
-        if not user or not self.verify_password(password, user['password_hash']):
-            self._record_failed_login(username)
-            return {'success': False, 'error': 'invalid_credentials'}
-
-        if not self.verify_2fa(username, otp_code):
-            return {'success': False, 'error': 'invalid_otp'}
-
-        user['last_login'] = datetime.utcnow().isoformat()
-        self.save_users(users)
-
-        with LOCK:
-            FAILED_LOGINS.pop(username, None)
-
-        token = self.generate_token(username)
-        return {'success': True, 'token': token, 'email': user['email']}
-
-    def get_user_info(self, username: str) -> Optional[Dict[str, Any]]:
-        users = self._load_users()
-        if username in users:
-            data = users[username].copy()
-            data.pop('password_hash', None)
-            data.pop('2fa_secret', None)
-            return data
-        return None
-
-    def save_user_search_history(self, username: str, search_data: Dict[str, Any]) -> None:
-        path = os.path.join(self.history_dir, f'history_{username}.aes')
-        try:
-            if os.path.exists(path):
-                with open(path, 'rb') as f:
-                    dec = self.storage.decrypt(f.read())
-                    history = json.loads(dec)
-            else:
-                history = []
-
-            entry = {
-                'search_id': search_data.get('search_id'),
-                'usernames': search_data.get('usernames', []),
-                'search_timestamp': search_data.get('search_timestamp', datetime.utcnow().isoformat()),
-                'total_sites_checked': search_data.get('total_sites_checked', 0),
-                'profiles_found': len(search_data.get('found_profiles', [])),
-                'profiles_not_found': len(search_data.get('not_found_profiles', [])),
-                'found_profiles': search_data.get('found_profiles', []),
-                'not_found_profiles': search_data.get('not_found_profiles', [])
+            logging.info(f"Starting UNIFIED search for {len(usernames)} usernames in ONE operation")
+            
+            results = {
+                'usernames': usernames,
+                'found_profiles': [],
+                'not_found_profiles': [],
+                'search_timestamp': self._get_timestamp(),
+                'total_sites_checked': 0,
+                'options_used': options,
+                'search_id': search_id
             }
-
-            history.append(entry)
-            history = history[-50:]
-
-            raw = json.dumps(history, indent=2).encode()
-            enc = self.storage.encrypt(raw)
-            with open(path, 'wb') as f:
-                f.write(enc)
-        except Exception:
-            logging.exception("Failed to save search history")
-
-    def get_user_search_history(self, username: str) -> List[Dict[str, Any]]:
-        path = os.path.join(self.history_dir, f'history_{username}.aes')
-        try:
-            if os.path.exists(path):
-                with open(path, 'rb') as f:
-                    dec = self.storage.decrypt(f.read())
-                    history = json.loads(dec)
-                    return sorted(history, key=lambda x: x.get('search_timestamp', ''), reverse=True)
-            return []
-        except Exception:
-            logging.exception("Failed to load search history")
-            return []
-
-    def clear_user_search_history(self, username: str) -> bool:
-        path = os.path.join(self.history_dir, f'history_{username}.aes')
-        try:
-            if os.path.exists(path):
-                os.remove(path)
-                return True
-            return False
-        except Exception:
-            logging.exception("Failed to clear search history")
-            return False
-
-
-class SearchManager:
-    def __init__(self):
-        self.progress_tracker = {}
-        self.progress_lock = threading.Lock()
-
-    def run_search(self, usernames: List[str], options: Dict[str, Any], search_id: str, translations: Dict[str, str]) -> Dict:
-        if not isinstance(usernames, list) or not all(isinstance(u, str) and USERNAME_REGEX.match(u) for u in usernames):
-            raise ValueError("Invalid usernames list")
-
-        results = {
-            'found_profiles': [],
-            'not_found_profiles': [],
-            'total_sites_checked': 0,
-            'search_timestamp': datetime.utcnow().isoformat()
-        }
-
-        total_usernames = len(usernames)
-        estimated_sites_per_user = 50
-        current_operation = 0
-
-        with self.progress_lock:
-            self.progress_tracker[search_id] = {
-                'progress': 5,
-                'message': translations.get('search_starting', 'Starting search...'),
-                'status': 'running',
-                'current_site': '',
-                'sites_checked': 0,
-                'total_sites': 0
+            
+            # Execute SINGLE unified search with ALL usernames
+            unified_results = self._search_all_usernames_unified(usernames, options)
+            
+            # Process all results from unified search
+            for username, user_results in unified_results.items():
+                for site_name, site_data in user_results.items():
+                    profile_data = {
+                        'username': username,
+                        'site': site_name,
+                        'url': site_data.get('url', ''),
+                        'status': site_data.get('status', 'unknown'),
+                        'response_time': site_data.get('response_time', 0)
+                    }
+                    
+                    if site_data.get('status') == 'found':
+                        results['found_profiles'].append(profile_data)
+                    else:
+                        results['not_found_profiles'].append(profile_data)
+            
+            logging.info(f"UNIFIED search completed: {len(results['found_profiles'])} found from all usernames")
+            
+            # Final processing
+            results['total_sites_checked'] = len(results['found_profiles']) + len(results['not_found_profiles'])
+            
+            # Save results immediately - SINGLE save operation
+            if history_manager and username_owner:
+                try:
+                    # Save results to file
+                    results_file = f'results/sherlock_results_{search_id}.json'
+                    os.makedirs('results', exist_ok=True)
+                    
+                    with open(results_file, 'w', encoding='utf-8') as f:
+                        json.dump(results, f, indent=2, ensure_ascii=False)
+                    
+                    # Update search status in history ONCE
+                    history_manager.update_search_status(
+                        username_owner, 
+                        search_id,
+                        'completed',
+                        results['total_sites_checked'],
+                        len(results['found_profiles']),
+                        results_file
+                    )
+                    
+                    logging.info(f"UNIFIED results saved for search {search_id}")
+                    
+                except Exception as e:
+                    logging.error(f"Error saving unified results: {str(e)}")
+            
+            logging.info(f"UNIFIED search completed: {len(results['found_profiles'])} found, {len(results['not_found_profiles'])} not found")
+            return results
+            
+        except Exception as e:
+            logging.error(f"UNIFIED search error: {str(e)}")
+            return {
+                'usernames': usernames,
+                'found_profiles': [],
+                'not_found_profiles': [],
+                'search_timestamp': self._get_timestamp(),
+                'total_sites_checked': 0,
+                'options_used': options,
+                'search_id': search_id,
+                'error': str(e)
             }
+    
+    def _search_all_usernames_unified(self, usernames: List[str], options: Dict[str, Any]) -> Dict:
+        """Execute single Sherlock command with all usernames at once"""
+        try:
+            # Build command with all usernames
+            cmd = ['python3', '-m', self.sherlock_path]
+            
+            # Optimize timeout - 3 seconds per site for balanced speed and completeness
+            cmd.extend(['--timeout', '3'])
+            cmd.append('--no-color')
+            
+            # Add options - CORRECTED logic for print_all
+            if options.get('print_all', False):
+                cmd.append('--print-all')
+            elif options.get('print_found', False):
+                cmd.append('--print-found')
+            
+            if options.get('nsfw', False):
+                cmd.append('--nsfw')
+            if options.get('local', False):
+                cmd.append('--local')
+                
+            # Add ALL usernames to single command
+            cmd.extend(usernames)
+            
+            logging.info(f"UNIFIED command with {len(usernames)} usernames: {' '.join(cmd[:10])}...")
+            
+            # Execute single command with all usernames - Longer timeout for multiple users
+            total_timeout = max(60, len(usernames) * 15)  # At least 15 seconds per username
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                timeout=total_timeout,
+                cwd=self.working_dir
+            )
+            
+            logging.info(f"Sherlock command completed with return code: {result.returncode}")
+            
+            # Parse unified output
+            return self._parse_unified_output(result.stdout, result.stderr, usernames)
+            
+        except subprocess.TimeoutExpired:
+            logging.warning(f"Unified search timeout for {len(usernames)} usernames")
+            # Return empty results for all usernames
+            return {username: {} for username in usernames}
+        except Exception as e:
+            logging.error(f"Unified search error: {str(e)}")
+            # Return empty results for all usernames
+            return {username: {} for username in usernames}
 
-        for i, username in enumerate(usernames):
-            base_progress = int((i / total_usernames) * 85) + 5
-
-            with self.progress_lock:
-                self.progress_tracker[search_id]['progress'] = base_progress
-                self.progress_tracker[search_id]['message'] = f"{translations.get('searching_user', 'Searching user')} {username}..."
-                self.progress_tracker[search_id]['current_site'] = ''
-                self.progress_tracker[search_id]['sites_checked'] = current_operation
-
-            user_results = self._search_username(username, options)
-
-            sites_checked = 0
-            for site_name, site_data in user_results.items():
-                sites_checked += 1
-                user_progress = base_progress + int((sites_checked / len(user_results)) * (85 / total_usernames))
-                with self.progress_lock:
-                    self.progress_tracker[search_id]['progress'] = min(user_progress, 90)
-                    self.progress_tracker[search_id]['current_site'] = site_name
-                    self.progress_tracker[search_id]['sites_checked'] = current_operation + sites_checked
-
-                profile_data = {
-                    'username': username,
-                    'site': site_name,
-                    'data': site_data
-                }
-
-                if site_data:
-                    results['found_profiles'].append(profile_data)
-                else:
-                    results['not_found_profiles'].append(profile_data)
-
-            current_operation += sites_checked
-
-        with self.progress_lock:
-            self.progress_tracker[search_id]['progress'] = 95
-            self.progress_tracker[search_id]['message'] = translations.get('processing_results', 'Processing results...')
-            self.progress_tracker[search_id]['current_site'] = ''
-
-        results['total_sites_checked'] = len(results['found_profiles']) + len(results['not_found_profiles'])
-        results['search_timestamp'] = datetime.utcnow().isoformat()
-
-        with self.progress_lock:
-            self.progress_tracker[search_id]['total_sites'] = results['total_sites_checked']
-            self.progress_tracker[search_id]['status'] = 'completed'
-
+    def _parse_unified_output(self, stdout: str, stderr: str, usernames: List[str]) -> Dict:
+        """Parse output from unified search with multiple usernames - IMPROVED parser"""
+        results = {username: {} for username in usernames}
+        
+        try:
+            lines = stdout.split('\n')
+            
+            # Debug output
+            logging.info(f"Parsing output with {len(lines)} lines for {len(usernames)} usernames")
+            if len(lines) < 50:  # Only log if output is short
+                logging.debug(f"Output lines: {lines[:20]}")
+            
+            # Method 1: Parse each line looking for patterns
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Look for [+] found results with username
+                if line.startswith('[+]'):
+                    match = re.search(r'\[\+\]\s*([^:]+):\s*(https?://[^\s]+)', line)
+                    if match:
+                        site_name = match.group(1).strip()
+                        url = match.group(2).strip()
+                        
+                        # Try to determine which username this belongs to
+                        matched_username = None
+                        for username in usernames:
+                            if username.lower() in url.lower() or username in url:
+                                matched_username = username
+                                break
+                        
+                        # If no match in URL, check if line contains username
+                        if not matched_username:
+                            for username in usernames:
+                                if username.lower() in line.lower():
+                                    matched_username = username
+                                    break
+                        
+                        # If still no match, assign to first username (fallback)
+                        if not matched_username and usernames:
+                            matched_username = usernames[0]
+                        
+                        if matched_username:
+                            results[matched_username][site_name] = {
+                                'status': 'found',
+                                'url': url,
+                                'response_time': 0
+                            }
+                
+                # Look for [-] not found results
+                elif line.startswith('[-]'):
+                    match = re.search(r'\[-\]\s*([^:]+):', line)
+                    if match:
+                        site_name = match.group(1).strip()
+                        
+                        # Try to determine which username this belongs to
+                        matched_username = None
+                        for username in usernames:
+                            if username.lower() in line.lower():
+                                matched_username = username
+                                break
+                        
+                        # If no match, assign to first username (fallback)
+                        if not matched_username and usernames:
+                            matched_username = usernames[0]
+                        
+                        if matched_username:
+                            results[matched_username][site_name] = {
+                                'status': 'not_found',
+                                'url': '',
+                                'response_time': 0
+                            }
+            
+            # Method 2: If no results found, try alternative parsing
+            total_results = sum(len(user_results) for user_results in results.values())
+            if total_results == 0:
+                logging.warning("No results found with method 1, trying alternative parsing")
+                
+                # Look for any URLs in the output and distribute them among usernames
+                urls = re.findall(r'https?://[^\s]+', stdout)
+                logging.info(f"Found {len(urls)} URLs in alternative parsing")
+                
+                for i, url in enumerate(urls):
+                    site_name = self._extract_site_name(url)
+                    username_index = i % len(usernames)  # Distribute URLs among usernames
+                    username = usernames[username_index]
+                    
+                    if site_name not in results[username]:
+                        results[username][site_name] = {
+                            'status': 'found',
+                            'url': url,
+                            'response_time': 0
+                        }
+            
+            # Log results summary
+            for username, user_results in results.items():
+                found_count = sum(1 for result in user_results.values() if result.get('status') == 'found')
+                not_found_count = sum(1 for result in user_results.values() if result.get('status') == 'not_found')
+                logging.info(f"Username '{username}': {found_count} found, {not_found_count} not found")
+            
+        except Exception as e:
+            logging.error(f"Error parsing unified output: {str(e)}")
+        
         return results
 
-    def _search_username(self, username: str, options: Dict[str, Any]) -> Dict[str, Any]:
-        # Dummy implementation - replace with real site queries
-        return {}
 
+    
+    def _parse_sherlock_output(self, stdout: str, stderr: str, username: str) -> Dict:
+        """Parse Sherlock command output"""
+        results = {}
+        
+        try:
+            lines = stdout.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Look for [+] found results
+                if line.startswith('[+]'):
+                    # Pattern: [+] SiteName: https://example.com/user
+                    match = re.search(r'\[\+\]\s*([^:]+):\s*(https?://[^\s]+)', line)
+                    if match:
+                        site_name = match.group(1).strip()
+                        url = match.group(2).strip()
+                        results[site_name] = {
+                            'status': 'found',
+                            'url': url,
+                            'response_time': 0
+                        }
+                
+                # Look for [-] not found results (if print-all was used)
+                elif line.startswith('[-]'):
+                    match = re.search(r'\[\-\]\s*([^:]+):', line)
+                    if match:
+                        site_name = match.group(1).strip()
+                        results[site_name] = {
+                            'status': 'not_found',
+                            'url': '',
+                            'response_time': 0
+                        }
+                
+                # Look for direct URLs without [+] prefix
+                elif 'http' in line and not line.startswith('['):
+                    # Try to extract site and URL
+                    url_match = re.search(r'https?://[^\s]+', line)
+                    if url_match:
+                        url = url_match.group(0)
+                        site_name = self._extract_site_name(url)
+                        results[site_name] = {
+                            'status': 'found',
+                            'url': url,
+                            'response_time': 0
+                        }
+            
+            # If no results found, try alternative parsing
+            if not results:
+                # Look for any URLs in the output
+                urls = re.findall(r'https?://[^\s]+', stdout)
+                for url in urls:
+                    site_name = self._extract_site_name(url)
+                    if site_name not in results:
+                        results[site_name] = {
+                            'status': 'found',
+                            'url': url,
+                            'response_time': 0
+                        }
+            
+            logging.info(f"Parsed {len(results)} results for {username}")
+            
+        except Exception as e:
+            logging.error(f"Error parsing Sherlock output: {str(e)}")
+            results['parse_error'] = {
+                'status': 'error',
+                'url': '',
+                'response_time': 0,
+                'error': str(e)
+            }
+        
+        return results
+    
+    def _extract_site_name(self, url: str) -> str:
+        """Extract site name from URL"""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower()
+            
+            # Remove 'www.' prefix
+            if domain.startswith('www.'):
+                domain = domain[4:]
+            
+            # Get main domain name
+            parts = domain.split('.')
+            if len(parts) >= 2:
+                return parts[0].title()
+            return domain.title()
+            
+        except Exception:
+            return "Unknown"
+    
+    def _get_timestamp(self) -> str:
+        """Get current timestamp"""
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")

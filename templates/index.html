@@ -99,21 +99,9 @@
 
                     <!-- Submit button -->
                     <div class="d-grid">
-                        {% if session.get('user_id') %}
-                            {% if cooldown_remaining > 0 %}
-                            <button type="button" class="btn btn-secondary btn-lg" disabled id="submitBtn">
-                                <i class="fas fa-clock me-2"></i>{{ translations.search_cooldown }} <span id="cooldownTimer">{{ cooldown_remaining }}</span> {{ translations.seconds }}
-                            </button>
-                            {% else %}
-                            <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
-                                <i class="fas fa-search me-2"></i>{{ translations.start_search }}
-                            </button>
-                            {% endif %}
-                        {% else %}
-                            <button type="button" class="btn btn-warning btn-lg" onclick="window.location.href='{{ url_for('login') }}'">
-                                <i class="fas fa-sign-in-alt me-2"></i>{{ translations.login_required }}
-                            </button>
-                        {% endif %}
+                        <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
+                            <i class="fas fa-search me-2"></i>{{ translations.start_search }}
+                        </button>
                     </div>
                 </form>
             </div>
@@ -122,31 +110,7 @@
 </div>
 
 <script>
-// Cooldown timer
-{% if cooldown_remaining > 0 %}
-let cooldownRemaining = {{ cooldown_remaining }};
-const cooldownTimer = document.getElementById('cooldownTimer');
-const submitBtn = document.getElementById('submitBtn');
-
-function updateCooldown() {
-    if (cooldownRemaining > 0) {
-        cooldownTimer.textContent = cooldownRemaining;
-        cooldownRemaining--;
-        setTimeout(updateCooldown, 1000);
-    } else {
-        // Re-enable the button
-        submitBtn.disabled = false;
-        submitBtn.className = 'btn btn-primary btn-lg';
-        submitBtn.innerHTML = '<i class="fas fa-search me-2"></i>{{ translations.start_search }}';
-        submitBtn.type = 'submit';
-    }
-}
-
-updateCooldown();
-{% endif %}
-
 // Form validation
-{% if session.get('user_id') and cooldown_remaining == 0 %}
 document.getElementById('searchForm').addEventListener('submit', function(e) {
     const usernames = document.getElementById('usernames').value.trim();
     const jsonFile = document.getElementById('json_file').files[0];
@@ -162,6 +126,5 @@ document.getElementById('searchForm').addEventListener('submit', function(e) {
     submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>{{ translations.searching }}';
     submitBtn.disabled = true;
 });
-{% endif %}
 </script>
 {% endblock %}

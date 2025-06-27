@@ -1,239 +1,349 @@
 """
-Authentication manager for Web Sherlock application
-Handles user authentication without database, using JSON files
-Now includes full protection against OWASP Top 10 and known CVEs
+Authentication Manager for Web Sherlock
+Handles user registration, login, and session management using JSON storage
+Implements security best practices including bcrypt, JWT, and rate limiting
 """
+
 import json
 import os
-import hashlib
-import secrets
-import logging
-import base64
+import time
 import uuid
-import pyotp
-from typing import Dict, Optional, List
+import base64
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
-from collections import defaultdict
+from typing import Dict, Optional, List, Any
+
+import bcrypt
+import jwt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.backends import default_backend
-import jwt
-import hmac
 
-load_dotenv()
-
-# Security constants
-JWT_SECRET = os.getenv("JWT_SECRET", "supersecret")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_ISSUER = os.getenv("JWT_ISSUER", "websherlock")
-JWT_EXP_DELTA = int(os.getenv("JWT_EXP_DELTA", "3600"))  # seconds
-AES_KEY_RAW = os.getenv("AES_KEY", "defaultkey12345678901234567890==")
-SECRET_KEY = base64.b64decode(AES_KEY_RAW)
-SALT = os.urandom(16)
-ITERATIONS = 100_000
-
-# Rate limiting
-FAILED_LOGINS = defaultdict(list)
-MAX_ATTEMPTS = 5
-BLOCK_WINDOW = timedelta(minutes=5)
-
-# Token revocation
-REVOKED_JTIS = set()
-
-class SecureStorage:
-    def __init__(self, key: bytes):
-        self.key = self.derive_key(key)
-
-    def derive_key(self, password: bytes, salt: bytes = SALT) -> bytes:
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=ITERATIONS,
-            backend=default_backend()
-        )
-        return kdf.derive(password)
-
-    def encrypt(self, data: bytes) -> bytes:
-        aesgcm = AESGCM(self.key)
-        nonce = os.urandom(12)
-        ciphertext = aesgcm.encrypt(nonce, data, None)
-        return base64.b64encode(nonce + ciphertext)
-
-    def decrypt(self, enc_data: bytes) -> bytes:
-        raw = base64.b64decode(enc_data)
-        nonce = raw[:12]
-        ciphertext = raw[12:]
-        aesgcm = AESGCM(self.key)
-        return aesgcm.decrypt(nonce, ciphertext, None)
 
 class AuthManager:
-    def __init__(self):
-        self.users_file = 'users.secure'
-        self.history_dir = 'history'
-        os.makedirs(self.history_dir, exist_ok=True)
-        self.storage = SecureStorage(SECRET_KEY)
+    def __init__(self, users_file='users.json', secret_key=None):
+        self.users_file = users_file
+        self.secret_key = secret_key or os.environ.get('SESSION_SECRET', 'default-secret-key')
+        self.jwt_issuer = 'web-sherlock'
+        self.jwt_algorithm = 'HS256'
+        self.login_attempts = {}  # In-memory rate limiting
+        self.max_attempts = 5
+        self.lockout_duration = 300  # 5 minutes
+        
+        # Initialize users file if it doesn't exist
+        self._init_users_file()
+    
+    def _init_users_file(self):
+        """Initialize users.json file if it doesn't exist"""
         if not os.path.exists(self.users_file):
-            self.save_users({})
-
-    def hash_password(self, password: str) -> str:
-        salt = secrets.token_hex(16)
-        hashed = hashlib.sha256((password + salt).encode()).hexdigest()
-        return f"{salt}:{hashed}"
-
-    def verify_password(self, password: str, stored: str) -> bool:
+            with open(self.users_file, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'users': {},
+                    'revoked_tokens': [],
+                    'created_at': datetime.utcnow().isoformat()
+                }, f, indent=2)
+    
+    def _load_users(self) -> Dict:
+        """Load users data from JSON file"""
         try:
-            salt, hashed = stored.split(":")
-            return hashlib.sha256((password + salt).encode()).hexdigest() == hashed
+            with open(self.users_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            self._init_users_file()
+            return self._load_users()
+    
+    def _save_users(self, data: Dict):
+        """Save users data to JSON file"""
+        with open(self.users_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    
+    def _rate_limit_check(self, username: str) -> bool:
+        """Check if user is rate limited"""
+        current_time = time.time()
+        if username in self.login_attempts:
+            attempts, last_attempt = self.login_attempts[username]
+            if current_time - last_attempt < self.lockout_duration and attempts >= self.max_attempts:
+                return True
+            elif current_time - last_attempt >= self.lockout_duration:
+                # Reset attempts after lockout period
+                del self.login_attempts[username]
+        return False
+    
+    def _record_login_attempt(self, username: str, success: bool):
+        """Record login attempt for rate limiting"""
+        current_time = time.time()
+        if success:
+            # Clear attempts on successful login
+            if username in self.login_attempts:
+                del self.login_attempts[username]
+        else:
+            if username in self.login_attempts:
+                attempts, _ = self.login_attempts[username]
+                self.login_attempts[username] = (attempts + 1, current_time)
+            else:
+                self.login_attempts[username] = (1, current_time)
+    
+    def _hash_password(self, password: str) -> str:
+        """Hash password using bcrypt"""
+        return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    
+    def _verify_password(self, password: str, hashed: str) -> bool:
+        """Verify password against hash"""
+        try:
+            return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
         except Exception:
             return False
-
-    def generate_2fa_secret(self) -> str:
-        return pyotp.random_base32()
-
-    def verify_2fa(self, secret: str, token: str) -> bool:
-        totp = pyotp.TOTP(secret)
-        return totp.verify(token)
-
-    def generate_token(self, username: str) -> str:
+    
+    def _generate_jwt(self, username: str) -> str:
+        """Generate JWT token for user with enhanced security"""
         jti = str(uuid.uuid4())
         payload = {
             'username': username,
-            'iss': JWT_ISSUER,
+            'iss': self.jwt_issuer,
             'jti': jti,
-            'exp': datetime.utcnow() + timedelta(seconds=JWT_EXP_DELTA)
+            'exp': datetime.utcnow() + timedelta(hours=1),  # Reduced expiration time
+            'iat': datetime.utcnow(),
+            'nbf': datetime.utcnow()  # Not before timestamp
         }
-        return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-
-    def verify_token(self, token: str) -> Optional[str]:
+        return jwt.encode(payload, self.secret_key, algorithm=self.jwt_algorithm)
+    
+    def _verify_jwt(self, token: str) -> Optional[Dict]:
+        """Verify JWT token with enhanced security checks"""
         try:
-            decoded = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], issuer=JWT_ISSUER)
-            if decoded.get('jti') in REVOKED_JTIS:
+            # Check if token is revoked
+            data = self._load_users()
+            if token in data.get('revoked_tokens', []):
                 return None
-            return decoded.get('username')
+            
+            # Decode with strict validation - reject "none" algorithm
+            payload = jwt.decode(
+                token, 
+                self.secret_key, 
+                algorithms=[self.jwt_algorithm],  # Only allow HS256
+                issuer=self.jwt_issuer,
+                options={
+                    "verify_signature": True,
+                    "verify_exp": True,
+                    "verify_nbf": True,
+                    "verify_iat": True,
+                    "verify_iss": True,
+                    "require": ["exp", "iat", "iss", "jti", "username"]
+                }
+            )
+            
+            # Additional validation
+            if not payload.get('username'):
+                return None
+                
+            return payload
         except jwt.ExpiredSignatureError:
             return None
         except jwt.InvalidTokenError:
             return None
-
-    def revoke_token(self, token: str):
-        try:
-            decoded = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": False})
-            jti = decoded.get('jti')
-            if jti:
-                REVOKED_JTIS.add(jti)
         except Exception:
-            logging.exception("Failed to revoke token")
-
-    def load_users(self) -> Dict:
-        try:
-            with open(self.users_file, 'rb') as f:
-                enc = f.read()
-                dec = self.storage.decrypt(enc)
-                return json.loads(dec)
-        except Exception:
-            logging.exception("Failed to load users")
-            return {}
-
-    def save_users(self, users: Dict):
-        try:
-            data = json.dumps(users).encode()
-            enc = self.storage.encrypt(data)
-            with open(self.users_file, 'wb') as f:
-                f.write(enc)
-        except Exception:
-            logging.exception("Failed to save users")
-
-    def register_user(self, username: str, email: str, password: str) -> Dict:
-        users = self.load_users()
+            return None
+    
+    def register_user(self, username: str, email: str, password: str) -> Dict[str, Any]:
+        """Register a new user"""
+        # Validate input
+        if not username or not email or not password:
+            return {'success': False, 'error': 'missing_fields'}
+        
+        if len(username) < 3 or len(username) > 50:
+            return {'success': False, 'error': 'invalid_username_length'}
+        
+        if len(password) < 6:
+            return {'success': False, 'error': 'password_too_short'}
+        
+        # Check if user already exists
+        data = self._load_users()
+        users = data.get('users', {})
+        
         if username in users:
-            return {'success': False, 'error': 'user_already_exists'}
-        if any(u.get('email') == email for u in users.values()):
-            return {'success': False, 'error': 'email_already_exists'}
-
-        secret = self.generate_2fa_secret()
+            return {'success': False, 'error': 'username_exists'}
+        
+        # Check if email already exists
+        for user_data in users.values():
+            if user_data.get('email') == email:
+                return {'success': False, 'error': 'email_exists'}
+        
+        # Create new user
+        hashed_password = self._hash_password(password)
         users[username] = {
             'email': email,
-            'password_hash': self.hash_password(password),
-            '2fa_secret': secret,
-            'created_at': datetime.now().isoformat(),
-            'last_login': None
+            'password_hash': hashed_password,
+            'created_at': datetime.utcnow().isoformat(),
+            'last_login': None,
+            'active': True
         }
-        self.save_users(users)
-        return {'success': True, 'username': username, '2fa_secret': secret}
-
-    def authenticate_user(self, username: str, password: str, otp: str, ip: str = '') -> Dict:
-        now = datetime.utcnow()
-        attempts = FAILED_LOGINS[username]
-        FAILED_LOGINS[username] = [ts for ts in attempts if now - ts < BLOCK_WINDOW]
-        if len(FAILED_LOGINS[username]) >= MAX_ATTEMPTS:
-            return {'success': False, 'error': 'rate_limited'}
-
-        users = self.load_users()
-        user = users.get(username)
-        if not user or not self.verify_password(password, user['password_hash']):
-            FAILED_LOGINS[username].append(now)
+        
+        data['users'] = users
+        self._save_users(data)
+        
+        # Generate token for immediate login
+        token = self._generate_jwt(username)
+        
+        return {
+            'success': True,
+            'token': token,
+            'user': {
+                'username': username,
+                'email': email,
+                'created_at': users[username]['created_at']
+            }
+        }
+    
+    def login_user(self, username: str, password: str) -> Dict[str, Any]:
+        """Login user and return JWT token"""
+        # Check rate limiting
+        if self._rate_limit_check(username):
+            return {'success': False, 'error': 'too_many_attempts'}
+        
+        # Validate input
+        if not username or not password:
+            self._record_login_attempt(username, False)
+            return {'success': False, 'error': 'missing_credentials'}
+        
+        # Load users
+        data = self._load_users()
+        users = data.get('users', {})
+        
+        if username not in users:
+            self._record_login_attempt(username, False)
             return {'success': False, 'error': 'invalid_credentials'}
-
-        if not self.verify_2fa(user['2fa_secret'], otp):
-            return {'success': False, 'error': 'invalid_otp'}
-
-        user['last_login'] = datetime.now().isoformat()
-        self.save_users(users)
-        FAILED_LOGINS.pop(username, None)
-
-        token = self.generate_token(username)
-        logging.info(f"Login from {username} | IP: {ip} | Time: {now.isoformat()}")
-        return {'success': True, 'token': token, 'email': user['email']}
-
-    def get_user_info(self, username: str) -> Optional[Dict]:
-        users = self.load_users()
-        if username in users:
-            user_data = users[username].copy()
-            user_data.pop('password_hash', None)
-            user_data.pop('2fa_secret', None)
-            return user_data
-        return None
-
-    def save_user_search_history(self, username: str, search_data: Dict):
-        file_path = os.path.join(self.history_dir, f"history_{username}.enc")
+        
+        user_data = users[username]
+        
+        # Check if account is active
+        if not user_data.get('active', True):
+            self._record_login_attempt(username, False)
+            return {'success': False, 'error': 'account_disabled'}
+        
+        # Verify password
+        if not self._verify_password(password, user_data['password_hash']):
+            self._record_login_attempt(username, False)
+            return {'success': False, 'error': 'invalid_credentials'}
+        
+        # Update last login
+        users[username]['last_login'] = datetime.utcnow().isoformat()
+        data['users'] = users
+        self._save_users(data)
+        
+        # Record successful login
+        self._record_login_attempt(username, True)
+        
+        # Generate token
+        token = self._generate_jwt(username)
+        
+        return {
+            'success': True,
+            'token': token,
+            'user': {
+                'username': username,
+                'email': user_data['email'],
+                'last_login': users[username]['last_login']
+            }
+        }
+    
+    def verify_token(self, token: str) -> Optional[Dict]:
+        """Verify token and return user data"""
+        payload = self._verify_jwt(token)
+        if not payload:
+            return None
+        
+        username = payload.get('username')
+        if not username:
+            return None
+        
+        # Get user data
+        data = self._load_users()
+        users = data.get('users', {})
+        
+        if username not in users or not users[username].get('active', True):
+            return None
+        
+        return {
+            'username': username,
+            'email': users[username]['email']
+        }
+    
+    def logout_user(self, token: str) -> bool:
+        """Logout user by revoking token"""
         try:
-            history = []
-            if os.path.exists(file_path):
-                with open(file_path, 'rb') as f:
-                    dec = self.storage.decrypt(f.read())
-                    history = json.loads(dec)
-            search_data['search_timestamp'] = search_data.get('search_timestamp', datetime.now().isoformat())
-            history.append(search_data)
-            history = history[-50:]
-            data = json.dumps(history, indent=2).encode()
-            enc = self.storage.encrypt(data)
-            with open(file_path, 'wb') as f:
-                f.write(enc)
+            data = self._load_users()
+            revoked_tokens = data.get('revoked_tokens', [])
+            
+            if token not in revoked_tokens:
+                revoked_tokens.append(token)
+                data['revoked_tokens'] = revoked_tokens
+                self._save_users(data)
+            
+            return True
         except Exception:
-            logging.exception("Failed to save search history")
-
-    def get_user_search_history(self, username: str) -> List[Dict]:
-        file_path = os.path.join(self.history_dir, f"history_{username}.enc")
-        try:
-            if os.path.exists(file_path):
-                with open(file_path, 'rb') as f:
-                    dec = self.storage.decrypt(f.read())
-                    return sorted(json.loads(dec), key=lambda x: x['search_timestamp'], reverse=True)
-            return []
-        except Exception:
-            logging.exception("Failed to load search history")
-            return []
-
-    def clear_user_search_history(self, username: str) -> bool:
-        file_path = os.path.join(self.history_dir, f"history_{username}.enc")
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                return True
             return False
+    
+    def get_user_profile(self, username: str) -> Optional[Dict]:
+        """Get user profile data"""
+        data = self._load_users()
+        users = data.get('users', {})
+        
+        if username not in users:
+            return None
+        
+        user_data = users[username]
+        return {
+            'username': username,
+            'email': user_data['email'],
+            'created_at': user_data['created_at'],
+            'last_login': user_data.get('last_login'),
+            'active': user_data.get('active', True)
+        }
+    
+    def change_password(self, username: str, old_password: str, new_password: str) -> Dict[str, Any]:
+        """Change user password"""
+        if len(new_password) < 6:
+            return {'success': False, 'error': 'password_too_short'}
+        
+        data = self._load_users()
+        users = data.get('users', {})
+        
+        if username not in users:
+            return {'success': False, 'error': 'user_not_found'}
+        
+        user_data = users[username]
+        
+        # Verify old password
+        if not self._verify_password(old_password, user_data['password_hash']):
+            return {'success': False, 'error': 'invalid_old_password'}
+        
+        # Update password
+        users[username]['password_hash'] = self._hash_password(new_password)
+        data['users'] = users
+        self._save_users(data)
+        
+        return {'success': True}
+    
+    def cleanup_revoked_tokens(self):
+        """Clean up expired revoked tokens"""
+        try:
+            data = self._load_users()
+            revoked_tokens = data.get('revoked_tokens', [])
+            
+            # Filter out expired tokens
+            valid_tokens = []
+            for token in revoked_tokens:
+                try:
+                    jwt.decode(token, self.secret_key, algorithms=[self.jwt_algorithm])
+                    valid_tokens.append(token)
+                except jwt.ExpiredSignatureError:
+                    # Token expired, don't keep it
+                    pass
+                except jwt.InvalidTokenError:
+                    # Invalid token, don't keep it
+                    pass
+            
+            if len(valid_tokens) != len(revoked_tokens):
+                data['revoked_tokens'] = valid_tokens
+                self._save_users(data)
+            
         except Exception:
-            logging.exception("Failed to clear search history")
-            return False
+            pass  # Fail silently for cleanup

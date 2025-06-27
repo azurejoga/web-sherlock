@@ -21,59 +21,77 @@
                 {{ translations.app_title }}
             </a>
             
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-label="{{ translations.menu }}">
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
-                <span class="visually-hidden">{{ translations.menu }}</span>
             </button>
             
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto">
+                    {% if user %}
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('index') }}">
                             <i class="fas fa-home me-1"></i>{{ translations.home }}
                         </a>
                     </li>
-                    {% if session.get('user_id') %}
                     <li class="nav-item">
-                        <a class="nav-link" href="{{ url_for('search_history') }}">
-                            <i class="fas fa-history me-1"></i>{{ translations.search_history }}
+                        <a class="nav-link" href="{{ url_for('history') }}">
+                            <i class="fas fa-history me-1"></i>{{ translations.history }}
                         </a>
                     </li>
                     {% endif %}
                 </ul>
                 
-                <!-- User menu and Language switcher -->
                 <div class="navbar-nav">
-                    {% if session.get('user_id') %}
+                    <!-- User menu or login -->
+                    {% if user %}
                     <div class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                            <i class="fas fa-user me-1"></i>{{ session.get('user_id') }}
+                            <i class="fas fa-user me-1"></i>{{ translations.menu }}
                         </a>
                         <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="{{ url_for('search_history') }}">
-                                <i class="fas fa-history me-1"></i>{{ translations.search_history }}
+                            <li><h6 class="dropdown-header">{{ user.username }}</h6></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{{ url_for('history') }}">
+                                <i class="fas fa-history me-2"></i>{{ translations.history }}
                             </a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item" href="{{ url_for('logout') }}">
-                                <i class="fas fa-sign-out-alt me-1"></i>{{ translations.logout }}
+                                <i class="fas fa-sign-out-alt me-2"></i>{{ translations.logout }}
                             </a></li>
                         </ul>
                     </div>
                     {% else %}
-                    <div class="nav-item">
+                    <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('login') }}">
                             <i class="fas fa-sign-in-alt me-1"></i>{{ translations.login }}
                         </a>
-                    </div>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('register') }}">
+                            <i class="fas fa-user-plus me-1"></i>{{ translations.register }}
+                        </a>
+                    </li>
                     {% endif %}
                     
+                    <!-- Language switcher -->
                     <div class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
                             <i class="fas fa-globe me-1"></i>{{ translations.language }}
                         </a>
                         <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="{{ url_for('set_language', language='pt') }}">🇧🇷 Português</a></li>
-                            <li><a class="dropdown-item" href="{{ url_for('set_language', language='en') }}">🇺🇸 English</a></li>
+                            {% for lang_code in supported_languages %}
+                                <li>
+                                    <a class="dropdown-item{% if session.language == lang_code %} active{% endif %}" 
+                                       href="{{ url_for('set_language', language=lang_code) }}">
+                                        {% if lang_code == 'pt' %}🇧🇷 Português
+                                        {% elif lang_code == 'en' %}🇺🇸 English
+                                        {% elif lang_code == 'es' %}🇪🇸 Español
+                                        {% elif lang_code == 'zh' %}🇨🇳 中文
+                                        {% else %}{{ lang_code.upper() }}
+                                        {% endif %}
+                                    </a>
+                                </li>
+                            {% endfor %}
                         </ul>
                     </div>
                 </div>
@@ -142,6 +160,18 @@
                             Built with Flask & Bootstrap
                         {% endif %}
                     </div>
+                </div>
+            </div>
+            <hr class="border-secondary">
+            <div class="row">
+                <div class="col-12 text-center">
+                    <p class="text-muted small mb-0">
+                        Copyright © 2025 
+                        <a href="https://github.com/azurejoga/" class="text-light text-decoration-none" target="_blank">
+                            <i class="fab fa-github me-1"></i>azurejoga
+                        </a>
+                        - All rights reserved
+                    </p>
                 </div>
             </div>
         </div>
