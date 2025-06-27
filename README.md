@@ -12,22 +12,6 @@
 [![Last Commit](https://img.shields.io/github/last-commit/azurejoga/web-sherlock.svg)](https://github.com/azurejoga/web-sherlock/commits/main)
 [![Repo Size](https://img.shields.io/github/repo-size/azurejoga/web-sherlock)](https://github.com/azurejoga/web-sherlock)
 
-<<<<<<< HEAD
-##  Features
-
-* **Advanced Search**: Look up usernames on 400+ social networks
-* **Multiple Users**: Search for multiple usernames (separated by lines or commas)
-* **Bilingual Interface**: Portuguese and English with JSON-based translation system
-* **Authentication System**: Registration, login, and session control
-* **Real-Time Monitoring**: Animated progress bar (without percentage)
-* **Search History**: View, delete, and manage past searches
-* **Multiple Export Formats**: JSON, CSV, PDF, TXT, and ZIP
-* **Rate Limiting**: 60-second cooldown between searches
-* **Responsive Interface**: Modern UI with Bootstrap 5
-* **Asynchronous Processing**: Background search with live updates
-
-## Technologies Used
-=======
 > **A powerful multilingual web interface for cross-platform social media username searches using the Sherlock Project tool.**
 
 Web Sherlock provides an intuitive, secure web interface for conducting comprehensive username investigations across 400+ social media platforms. Built with Flask and featuring multi-user support, real-time search capabilities, and professional export options using the Sherlock Project
@@ -41,22 +25,17 @@ Web Sherlock provides an intuitive, secure web interface for conducting comprehe
 * Rate Limiting: 60-second cooldown between searches
 * Responsive Interface: Modern UI with Bootstrap 5
 * Asynchronous Processing: Background search with live updates
->>>>>>> 488654d43a0423b5bbfd989ce0c86ff345c6a0e0
 
 ### 🌐 **Multilingual Support**
 - **4 Complete Languages**: Portuguese, English, Spanish, Chinese
 - **Automatic Detection**: New languages auto-appear in the interface
 - **Easy Translation**: Step-by-step guides for contributors
 
-<<<<<<< HEAD
-## Installation & Execution
-=======
 ### 🚀 **High Performance**
 - **Unlimited Parallel Searches**: Up to 20 concurrent threads
 - **Fast Results**: 2-3 second timeout per site
 - **Background Processing**: Non-blocking search execution
 - **Real-time Updates**: Live search progress tracking
->>>>>>> 488654d43a0423b5bbfd989ce0c86ff345c6a0e0
 
 ### 📊 **Professional Export Options**
 - **Multiple Formats**: JSON, CSV, PDF, TXT, ZIP
@@ -115,58 +94,6 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-<<<<<<< HEAD
-The application will be available at `http://localhost:5000`
-
-## How to Use
-
-### 1. Register and Log In
-
-* Open the application and create an account
-* Log in to access full features
-
-### 2. Perform Searches
-
-* **Method 1**: Type one username per line
-* **Method 2**: Enter usernames separated by commas: `azurejoga, zargonbr, user3`
-* **Method 3**: Upload a JSON file with a list of usernames
-* Click "Start Search" to begin and track progress live
-
-### 3. Manage Search History
-
-* Go to "Search History" in the menu
-* View previous results by clicking "View Results"
-* Delete individual items or clear all history
-
-### 4. Export Results
-
-* **JSON**: Structured data for integration
-* **CSV**: Excel-compatible spreadsheet
-* **PDF**: Print-friendly report
-* **TXT**: Plain text
-* **ZIP**: All formats in a compressed file
-
-### Project Structure
-
-```
-web-sherlock/
-├── app.py                 # Main Flask app
-├── main.py                # Entry point
-├── auth_manager.py        # Authentication system
-├── sherlock_runner.py     # Sherlock integration
-├── export_utils.py        # Export logic
-├── translations.py        # Language system
-├── templates/             # HTML templates
-├── static/                # CSS and JavaScript
-├── translations/          # JSON translation files
-├── sherlock/              # Embedded Sherlock project
-├── uploads/               # Uploaded files
-├── results/               # Exported results
-└── pyproject.toml         # Poetry dependencies
-```
-
-## Internationalization
-=======
 3. **Set Environment Variables**
 ```bash
 export SESSION_SECRET="your-secret-key-here"
@@ -177,7 +104,6 @@ export FLASK_ENV=development  # Optional for development
 ```bash
 python3 main.py # for Windows, python main.py
 ```
->>>>>>> 488654d43a0423b5bbfd989ce0c86ff345c6a0e0
 
 5. **Access the Interface**
    - Open your browser to `http://localhost:5000`
@@ -188,24 +114,16 @@ We are still investigating the issue where the system returns 0 users in the sea
 
 ## 🌍 Supported Languages
 
-<<<<<<< HEAD
-## Authentication System
-=======
 | Language | Code | Status | Contributors |
 |----------|------|--------|-------------|
 | 🇧🇷 Português | `pt` | ✅ Complete (145 strings) | [azurejoga](https://github.com/azurejoga) |
 | 🇺🇸 English | `en` | ✅ Complete (145 strings) | [azurejoga](https://github.com/azurejoga) |
 | 🇪🇸 Español | `es` | ✅ Complete (145 strings) | [azurejoga](https://github.com/azurejoga) |
 | 🇨🇳 中文 | `zh` | ✅ Complete (145 strings) | [azurejoga](https://github.com/azurejoga) |
->>>>>>> 488654d43a0423b5bbfd989ce0c86ff345c6a0e0
 
 **Want to add your language?** See our [Translation Guide](TRANSLATION.md) for step-by-step instructions.
 
-<<<<<<< HEAD
-## Monitoring
-=======
 ## 📚 Documentation
->>>>>>> 488654d43a0423b5bbfd989ce0c86ff345c6a0e0
 
 - **[Security Guide](SECURITY.md)**: Comprehensive security documentation
 - **[Translation Guide](TRANSLATION.md)**: How to add new languages
@@ -215,15 +133,11 @@ We are still investigating the issue where the system returns 0 users in the sea
 
 ## 🔧 System Requirements
 
-<<<<<<< HEAD
-##  Author
-=======
 - **Python**: 3.11 or higher
 - **Memory**: 512MB RAM minimum (2GB recommended)
 - **Storage**: 1GB free space
 - **Network**: Internet connection for searches
 - **Browser**: Modern web browser (Chrome, Firefox, Safari, Edge)
->>>>>>> 488654d43a0423b5bbfd989ce0c86ff345c6a0e0
 
 ## 🔍 How It Works
 
@@ -236,23 +150,15 @@ We are still investigating the issue where the system returns 0 users in the sea
 7. **History Management**: Access and manage past searches
 
 
-## Contributing
+## 🤝 Contributing
 
 We welcome contributions! see to [CONTRIBUTING]((CONTRIBUTING.md)
 
-<<<<<<< HEAD
-##  License
-=======
 ## 📄 License
->>>>>>> 488654d43a0423b5bbfd989ce0c86ff345c6a0e0
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-<<<<<<< HEAD
-##  Useful Links
-=======
 ## 🙏 Acknowledgments
->>>>>>> 488654d43a0423b5bbfd989ce0c86ff345c6a0e0
 
 - **[Sherlock Project](https://github.com/sherlock-project/sherlock)**: The amazing CLI tool that powers our searches
 - **Flask Community**: For the excellent web framework
@@ -261,9 +167,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Support
 
-<<<<<<< HEAD
-To report bugs or request features, open an [issue on GitHub](https://github.com/azurejoga/web-sherlock/issues).
-=======
 - **GitHub Issues**: [Report bugs or request features](https://github.com/azurejoga/web-sherlock/issues)
 - **Discussions**: [Community discussions](https://github.com/azurejoga/web-sherlock/discussions)
 - **Security Issues**: [Report security vulnerabilities](SECURITY.md#reporting-security-vulnerabilities)
