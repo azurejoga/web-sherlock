@@ -24,7 +24,7 @@ Web Sherlock uses a modular translation system based on JSON files located in th
 2. **Follow the interactive menu:**
    - Choose option "1" (Add new language)
    - Enter the language code (e.g., `fr` for French, `de` for German)
-   - Confirm to create the file based on Portuguese
+   - Confirm to create the file based on English
 
 3. **The system will:**
    - Automatically create the `translations/[code].json` file

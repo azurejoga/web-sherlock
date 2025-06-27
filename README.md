@@ -152,7 +152,7 @@ We are still investigating the issue where the system returns 0 users in the sea
 
 ## 🤝 Contributing
 
-We welcome contributions! see to [CONTRIBUTING]((CONTRIBUTING.md)
+We welcome contributions! see to [CONTRIBUTING](CONTRIBUTING.md)
 
 ## 📄 License
 
@@ -163,7 +163,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **[Sherlock Project](https://github.com/sherlock-project/sherlock)**: The amazing CLI tool that powers our searches
 - **Flask Community**: For the excellent web framework
 - **Bootstrap Team**: For the responsive UI components
-- **All Contributors**: See [CONTRIBUTORS.md](CONTRIBUTORS.md) for the full list
+- **All Contributors**: See [CONTRIBUTORS](CONTRIBUTORS.md) for the full list
 
 ## Support
 
